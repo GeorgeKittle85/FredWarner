@@ -1,0 +1,1486 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spaceflight Simulator</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; overflow:hidden; font-family:'Courier New',monospace; user-select:none; }
+canvas { display:block; }
+
+/* ===== MENU ===== */
+#menu {
+position:fixed; inset:0; display:flex; flex-direction:column;
+align-items:center; justify-content:center;
+background: radial-gradient(ellipse at 50% 70%, #0a0e1a 0%, #000 70%);
+z-index:100;
+}
+#menu h1 {
+font-size:3.2rem; letter-spacing:0.15em; color:#fff;
+text-shadow: 0 0 40px rgba(80,160,255,0.8), 0 0 80px rgba(80,160,255,0.3);
+font-weight:700; margin-bottom:8px;
+}
+#menu .subtitle {
+color:#7aa3cc; font-size:0.9rem; letter-spacing:0.3em;
+margin-bottom:60px; text-transform:uppercase;
+}
+.menu-btn {
+background: linear-gradient(135deg,#1a3a5c,#0d2035);
+border: 1px solid #2a5a8c; color:#6db3f2;
+font-family:‘Courier New’,monospace; font-size:1rem;
+letter-spacing:0.1em; padding:14px 48px; margin:8px;
+cursor:pointer; transition:all 0.2s; border-radius:3px;
+min-width:220px; text-transform:uppercase;
+}
+.menu-btn:hover {
+background:linear-gradient(135deg,#1e4d7a,#112840);
+border-color:#4a9ad4; color:#a0d0ff;
+box-shadow:0 0 20px rgba(80,160,255,0.3);
+}
+.stars-bg { position:fixed; inset:0; pointer-events:none; }
+
+/* ===== BUILDER ===== */
+#builder {
+position:fixed; inset:0; display:none; flex-direction:row;
+background:#0a0c10; z-index:50;
+}
+#partPalette {
+width:200px; background:#0d1117; border-right:1px solid #1e2a3a;
+display:flex; flex-direction:column; overflow-y:auto; flex-shrink:0;
+}
+#partPalette h3 {
+color:#7aa3cc; font-size:0.75rem; letter-spacing:0.2em;
+padding:16px 12px 8px; text-transform:uppercase; border-bottom:1px solid #1e2a3a;
+}
+.palette-part {
+display:flex; align-items:center; gap:10px;
+padding:10px 12px; cursor:pointer; border-bottom:1px solid #161e28;
+transition:background 0.15s; color:#aac8e0; font-size:0.75rem;
+}
+.palette-part:hover { background:#141c28; }
+.palette-icon {
+width:32px; height:32px; border-radius:2px; flex-shrink:0;
+display:flex; align-items:center; justify-content:center; font-size:18px;
+}
+.palette-info { display:flex; flex-direction:column; gap:2px; }
+.palette-name { color:#c8e0f8; font-size:0.78rem; }
+.palette-desc { color:#567; font-size:0.65rem; }
+
+#builderCenter {
+flex:1; display:flex; flex-direction:column; align-items:center;
+background:#0a0c12; overflow:hidden; position:relative;
+}
+#builderCenter h3 {
+color:#4a7a9b; font-size:0.7rem; letter-spacing:0.2em;
+padding:12px; text-transform:uppercase; width:100%; text-align:center;
+border-bottom:1px solid #1e2a3a;
+}
+#rocketCanvas { flex:1; }
+
+#builderRight {
+width:220px; background:#0d1117; border-left:1px solid #1e2a3a;
+display:flex; flex-direction:column; gap:12px; padding:16px; flex-shrink:0;
+}
+#builderRight h3 {
+color:#7aa3cc; font-size:0.75rem; letter-spacing:0.2em;
+text-transform:uppercase; border-bottom:1px solid #1e2a3a; padding-bottom:10px;
+}
+.stats-row {
+display:flex; justify-content:space-between;
+color:#7a9ab0; font-size:0.75rem; padding:3px 0;
+border-bottom:1px solid #111820;
+}
+.stats-val { color:#c0ddf0; }
+
+.build-btn {
+padding:10px; cursor:pointer; border-radius:2px;
+font-family:‘Courier New’,monospace; font-size:0.78rem;
+letter-spacing:0.08em; border:1px solid; transition:all 0.2s;
+text-align:center; text-transform:uppercase; margin-top:4px;
+}
+.build-btn.primary {
+background:#0d3b2e; border-color:#1a6b4a; color:#3dd68c;
+}
+.build-btn.primary:hover { background:#104d3a; box-shadow:0 0 12px rgba(61,214,140,0.2); }
+.build-btn.danger {
+background:#2e0d0d; border-color:#6b1a1a; color:#d63d3d;
+}
+.build-btn.danger:hover { background:#3d1010; }
+.build-btn.secondary {
+background:#0d1a2e; border-color:#1a3a6b; color:#3d7dd6;
+}
+.build-btn.secondary:hover { background:#102040; }
+
+#builderRight .hint {
+color:#3a5a6a; font-size:0.65rem; line-height:1.6;
+margin-top:auto; padding-top:16px; border-top:1px solid #1e2a3a;
+}
+
+/* ===== FLIGHT HUD ===== */
+#flightHUD {
+position:fixed; inset:0; pointer-events:none; display:none; z-index:10;
+}
+
+/* Telemetry panel */
+#telemetry {
+position:absolute; top:16px; left:16px;
+background:rgba(0,8,20,0.85); border:1px solid #1e3a5a;
+border-radius:3px; padding:14px; min-width:200px;
+pointer-events:all; backdrop-filter:blur(4px);
+}
+#telemetry .tele-title {
+color:#3a7aaa; font-size:0.65rem; letter-spacing:0.25em;
+text-transform:uppercase; border-bottom:1px solid #1a3a5a;
+padding-bottom:6px; margin-bottom:8px;
+}
+.tele-row {
+display:flex; justify-content:space-between; gap:20px;
+color:#5a8aaa; font-size:0.72rem; padding:2px 0;
+}
+.tele-val { color:#a0d8f8; font-variant-numeric:tabular-nums; }
+
+/* Throttle */
+#throttlePanel {
+position:absolute; right:20px; bottom:120px;
+display:flex; flex-direction:column; align-items:center; gap:8px;
+pointer-events:all;
+}
+#throttleLabel {
+color:#5a8aaa; font-size:0.65rem; letter-spacing:0.2em; text-transform:uppercase;
+}
+#throttleTrack {
+width:24px; height:160px; background:rgba(0,8,20,0.85);
+border:1px solid #1e3a5a; border-radius:12px; position:relative; overflow:hidden;
+}
+#throttleFill {
+position:absolute; bottom:0; left:0; right:0;
+background:linear-gradient(to top,#ff6020,#ff9a00); border-radius:12px;
+transition:height 0.1s;
+}
+#throttleVal {
+color:#ff9a00; font-size:0.72rem; font-variant-numeric:tabular-nums;
+}
+
+/* Stage button */
+#stageBtn {
+position:absolute; bottom:30px; right:16px;
+background:rgba(0,8,20,0.85); border:2px solid #3a6aaa;
+color:#5aaad8; font-family:‘Courier New’,monospace;
+font-size:0.75rem; letter-spacing:0.15em; text-transform:uppercase;
+padding:12px 24px; cursor:pointer; pointer-events:all;
+border-radius:3px; transition:all 0.2s;
+}
+#stageBtn:hover, #stageBtn.active {
+border-color:#3dd68c; color:#3dd68c;
+box-shadow:0 0 16px rgba(61,214,140,0.3);
+}
+
+/* Controls hint */
+#controlsHint {
+position:absolute; bottom:30px; left:16px;
+background:rgba(0,8,20,0.75); border:1px solid #1e2a3a;
+border-radius:3px; padding:12px; font-size:0.65rem; color:#3a5a6a;
+line-height:1.9; pointer-events:all;
+}
+#controlsHint span { color:#5a8aaa; }
+
+/* Toolbar */
+#toolbar {
+position:absolute; top:16px; right:16px;
+display:flex; gap:8px; pointer-events:all;
+}
+.tool-btn {
+background:rgba(0,8,20,0.85); border:1px solid #1e3a5a;
+color:#5a9ac8; font-family:‘Courier New’,monospace;
+font-size:0.68rem; letter-spacing:0.15em; padding:8px 16px;
+cursor:pointer; transition:all 0.2s; border-radius:2px; text-transform:uppercase;
+}
+.tool-btn:hover { border-color:#3a7aaa; color:#90c8f0; }
+.tool-btn.active { border-color:#3dd68c; color:#3dd68c; }
+
+/* Time warp */
+#timeWarp {
+position:absolute; top:60px; right:16px;
+background:rgba(0,8,20,0.85); border:1px solid #1e3a5a;
+border-radius:3px; padding:8px 14px; pointer-events:all;
+display:flex; align-items:center; gap:10px;
+}
+#timeWarp .label { color:#3a5a6a; font-size:0.63rem; text-transform:uppercase; letter-spacing:0.2em; }
+#timeWarpVal { color:#f0c040; font-size:0.75rem; min-width:50px; text-align:center; }
+#timeWarp button {
+background:none; border:1px solid #2a4a6a; color:#5a8aaa;
+font-family:‘Courier New’,monospace; font-size:0.7rem;
+cursor:pointer; padding:2px 8px; border-radius:2px; transition:all 0.15s;
+}
+#timeWarp button:hover { border-color:#4a8aaa; color:#90c8f0; }
+
+/* Status message */
+#statusMsg {
+position:absolute; top:50%; left:50%;
+transform:translate(-50%,-50%);
+background:rgba(0,8,20,0.9); border:1px solid #2a5a8a;
+color:#90c8f0; font-size:0.8rem; letter-spacing:0.15em;
+padding:10px 24px; border-radius:2px; text-align:center;
+display:none; text-transform:uppercase; pointer-events:none;
+}
+
+/* Orbit info */
+#orbitInfo {
+position:absolute; top:16px; left:50%; transform:translateX(-50%);
+background:rgba(0,8,20,0.8); border:1px solid #1e3a5a;
+border-radius:3px; padding:8px 20px; display:none;
+gap:24px; pointer-events:all;
+}
+.orbit-stat {
+display:flex; flex-direction:column; align-items:center;
+font-size:0.65rem; color:#3a5a6a; text-transform:uppercase; letter-spacing:0.15em;
+}
+.orbit-val { color:#a0c8f0; font-size:0.8rem; margin-top:2px; }
+
+/* Map overlay info */
+#mapInfo {
+position:absolute; bottom:20px; left:50%; transform:translateX(-50%);
+color:#3a6a8a; font-size:0.65rem; letter-spacing:0.15em; text-align:center;
+display:none; text-transform:uppercase;
+}
+
+/* Crash / success screen */
+#endScreen {
+position:fixed; inset:0; display:none; flex-direction:column;
+align-items:center; justify-content:center;
+background:rgba(0,0,0,0.85); z-index:200;
+}
+#endScreen h2 { font-size:2rem; letter-spacing:0.2em; margin-bottom:16px; }
+#endScreen p { color:#7aa3cc; font-size:0.9rem; margin-bottom:40px; letter-spacing:0.1em; }
+
+/* Scrollbar */
+::-webkit-scrollbar { width:5px; }
+::-webkit-scrollbar-track { background:#080c12; }
+::-webkit-scrollbar-thumb { background:#2a4a6a; border-radius:3px; }
+</style>
+
+</head>
+<body>
+
+<canvas id="gameCanvas"></canvas>
+
+<!-- ===== MAIN MENU ===== -->
+
+<div id="menu">
+  <canvas class="stars-bg" id="menuStars"></canvas>
+  <h1>SPACEFLIGHT</h1>
+  <div class="subtitle">Simulator</div>
+  <button class="menu-btn" onclick="startBuilder()">🚀 Build &amp; Launch</button>
+  <button class="menu-btn" onclick="loadQuickLaunch()">⚡ Quick Launch</button>
+  <button class="menu-btn" id="controlsMenuBtn" onclick="toggleControlsMenu()">🎮 Controls</button>
+  <div id="controlsMenu" style="display:none;color:#5a8aaa;font-size:0.75rem;letter-spacing:0.12em;text-align:left;margin-top:16px;line-height:2.2;border:1px solid #1e3a5a;padding:16px;border-radius:3px;background:rgba(0,8,20,0.7);">
+    <b style="color:#90c8f0">FLIGHT CONTROLS</b><br>
+    W / ↑ &nbsp;&nbsp;&nbsp; Throttle Up<br>
+    S / ↓ &nbsp;&nbsp;&nbsp; Throttle Down<br>
+    A / ← &nbsp;&nbsp;&nbsp; Rotate Left<br>
+    D / → &nbsp;&nbsp;&nbsp; Rotate Right<br>
+    SPACE &nbsp;&nbsp;&nbsp; Activate Stage<br>
+    M &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; Toggle Map View<br>
+    , / . &nbsp;&nbsp;&nbsp; Time Warp Down/Up<br>
+    Scroll &nbsp;&nbsp; Zoom (Map Mode)
+  </div>
+</div>
+
+<!-- ===== ROCKET BUILDER ===== -->
+
+<div id="builder">
+  <div id="partPalette">
+    <h3>Parts</h3>
+    <div id="paletteList"></div>
+  </div>
+  <div id="builderCenter">
+    <h3>Rocket Assembly — Click part to remove | Click palette to add</h3>
+    <canvas id="rocketCanvas"></canvas>
+  </div>
+  <div id="builderRight">
+    <h3>Rocket Stats</h3>
+    <div id="rocketStats"></div>
+    <div style="height:16px"></div>
+    <div class="build-btn primary" onclick="launchRocket()">▶ LAUNCH</div>
+    <div class="build-btn danger" onclick="clearRocket()">✕ CLEAR</div>
+    <div class="build-btn secondary" onclick="showMenu()">← MENU</div>
+    <div class="hint">
+      Click palette parts to add them.<br>Click assembly parts to remove.<br>
+      Add a SEPARATOR to create stages.<br>Engines must be at the bottom of each stage.
+    </div>
+  </div>
+</div>
+
+<!-- ===== FLIGHT HUD ===== -->
+
+<div id="flightHUD">
+  <div id="telemetry">
+    <div class="tele-title">Telemetry</div>
+    <div class="tele-row"><span>Altitude</span><span class="tele-val" id="t-alt">0 m</span></div>
+    <div class="tele-row"><span>Speed</span><span class="tele-val" id="t-spd">0 m/s</span></div>
+    <div class="tele-row"><span>Vert. Speed</span><span class="tele-val" id="t-vspd">0 m/s</span></div>
+    <div class="tele-row"><span>Horiz. Speed</span><span class="tele-val" id="t-hspd">0 m/s</span></div>
+    <div class="tele-row"><span>Fuel</span><span class="tele-val" id="t-fuel">0%</span></div>
+    <div class="tele-row"><span>Stage</span><span class="tele-val" id="t-stage">1</span></div>
+    <div class="tele-row"><span>Body</span><span class="tele-val" id="t-body">Earth</span></div>
+  </div>
+
+  <div id="orbitInfo">
+    <div class="orbit-stat"><span>Apoapsis</span><span class="orbit-val" id="o-ap">—</span></div>
+    <div class="orbit-stat"><span>Periapsis</span><span class="orbit-val" id="o-pe">—</span></div>
+    <div class="orbit-stat"><span>Eccentricity</span><span class="orbit-val" id="o-ecc">—</span></div>
+    <div class="orbit-stat"><span>Period</span><span class="orbit-val" id="o-period">—</span></div>
+  </div>
+
+  <div id="throttlePanel">
+    <div id="throttleLabel">Throttle</div>
+    <div id="throttleTrack"><div id="throttleFill" style="height:0%"></div></div>
+    <div id="throttleVal">0%</div>
+  </div>
+
+<button id="stageBtn" onclick="activateStage()">SPACE — STAGE</button>
+
+  <div id="controlsHint">
+    <span>W/S</span> Throttle &nbsp; <span>A/D</span> Rotate<br>
+    <span>SPACE</span> Stage &nbsp; <span>M</span> Map<br>
+    <span>,.&nbsp;</span> Time Warp
+  </div>
+
+  <div id="toolbar">
+    <button class="tool-btn" onclick="showMenu()">← Menu</button>
+    <button class="tool-btn" id="mapToggleBtn" onclick="toggleMap()">MAP [M]</button>
+  </div>
+
+  <div id="timeWarp">
+    <span class="label">Warp</span>
+    <button onclick="changeTimeWarp(-1)">◀</button>
+    <span id="timeWarpVal">1×</span>
+    <button onclick="changeTimeWarp(1)">▶</button>
+  </div>
+
+  <div id="statusMsg"></div>
+  <div id="mapInfo">SCROLL TO ZOOM &nbsp;|&nbsp; MAP VIEW</div>
+</div>
+
+<!-- ===== END SCREEN ===== -->
+
+<div id="endScreen">
+  <h2 id="endTitle"></h2>
+  <p id="endMsg"></p>
+  <button class="menu-btn" onclick="startBuilder()">Build Again</button>
+  <button class="menu-btn" onclick="showMenu()">Main Menu</button>
+</div>
+
+<script>
+// ============================================================
+//  SPACEFLIGHT SIMULATOR — Web Edition
+//  Single-file, deployable on GitHub Pages
+// ============================================================
+
+// ---- Constants ----
+const G  = 6.674e-11;
+const TAU = Math.PI * 2;
+const DEG = Math.PI / 180;
+
+const EARTH = {
+  name:'Earth', mass:5.972e24, radius:6371000,
+  gm:3.986004418e14, color:'#1a4a2a',
+  oceanColor:'#0a2a4a', atmosphereColor:'rgba(80,140,255,0.18)',
+  atmosphereHeight:120000, scaleHeight:8500,
+  seaLevelDensity:1.225, pos:{x:0,y:0}
+};
+const MOON = {
+  name:'Moon', mass:7.342e22, radius:1737400,
+  gm:4.9048695e12, color:'#888',
+  orbitRadius:384400000, period:2360591.5,
+  startAngle:0.8
+};
+
+// Part definitions: mass (kg), pixH (display px), pixW, color, type, fuelCap (kg), thrust (N), fuelRate (kg/s)
+const PARTS = {
+  noseCone:  {name:'Nose Cone',   icon:'▲', mass:120, pixH:40, pixW:48, color:'#b0b8c0', type:'nose',      desc:'Reduces drag'},
+  capsule:   {name:'Capsule',     icon:'🧑‍🚀',mass:1200,pixH:56, pixW:52, color:'#8a8a6a', type:'capsule',   desc:'Crew module'},
+  tankSm:    {name:'Tank (S)',     icon:'⬜', mass:180, pixH:40, pixW:48, color:'#c4c8cc', type:'tank',      fuelCap:3000,  desc:'3,000 kg fuel'},
+  tankMd:    {name:'Tank (M)',     icon:'⬜', mass:340, pixH:70, pixW:48, color:'#c4c8cc', type:'tank',      fuelCap:8000,  desc:'8,000 kg fuel'},
+  tankLg:    {name:'Tank (L)',     icon:'⬜', mass:600, pixH:110,pixW:48, color:'#c4c8cc', type:'tank',      fuelCap:18000, desc:'18,000 kg fuel'},
+  engineSm:  {name:'Engine',      icon:'🔥', mass:450, pixH:38, pixW:44, color:'#666',   type:'engine',    thrust:220000, fuelRate:80,  desc:'220 kN'},
+  engineLg:  {name:'Large Engine',icon:'🔥', mass:1100,pixH:50, pixW:60, color:'#555',   type:'engine',    thrust:800000, fuelRate:250, desc:'800 kN'},
+  separator: {name:'Separator',   icon:'══', mass:60,  pixH:14, pixW:52, color:'#f0b020', type:'separator', desc:'Stage separator'},
+  fins:      {name:'Fins',        icon:'◁▷', mass:120, pixH:28, pixW:80, color:'#9aacb8', type:'fins',      desc:'Stability fins'},
+  parachute: {name:'Parachute',   icon:'🌂', mass:90,  pixH:24, pixW:52, color:'#e07030', type:'parachute', desc:'Deceleration chute'},
+};
+
+// ---- Game state ----
+let gameState = 'menu';  // menu | builder | flight
+let mapMode   = false;
+
+// Rocket blueprint (built in builder)
+let blueprint = [];  // array of part keys, top→bottom
+
+// Flight simulation
+let sim = null;
+
+// Canvas & context
+const canvas = document.getElementById('gameCanvas');
+const ctx     = canvas.getContext('2d');
+
+// Time warp levels
+const WARP_LEVELS = [1, 2, 5, 10, 50, 100, 500, 1000];
+let warpIdx = 0;
+
+// Camera
+let cam = { x:0, y:0, scale:1, targetScale:1 };
+
+// Input
+const keys = {};
+document.addEventListener('keydown', e => { keys[e.code] = true; onKeyDown(e); });
+document.addEventListener('keyup',   e => { keys[e.code] = false; });
+canvas.addEventListener('wheel', onWheel, {passive:false});
+
+// ---- Resize ----
+function resize() {
+  canvas.width  = window.innerWidth;
+  canvas.height = window.innerHeight;
+  const rc = document.getElementById('rocketCanvas');
+  if (rc) {
+    rc.width  = rc.parentElement.clientWidth;
+    rc.height = rc.parentElement.clientHeight - 40;
+  }
+}
+window.addEventListener('resize', resize);
+resize();
+
+// ============================================================
+//  MENU STARS BACKGROUND
+// ============================================================
+const menuStarsCanvas = document.getElementById('menuStars');
+const msCtx = menuStarsCanvas.getContext('2d');
+let menuStars = [];
+function initMenuStars() {
+  menuStarsCanvas.width  = window.innerWidth;
+  menuStarsCanvas.height = window.innerHeight;
+  menuStars = [];
+  for (let i=0;i<300;i++) menuStars.push({
+    x:Math.random()*menuStarsCanvas.width,
+    y:Math.random()*menuStarsCanvas.height,
+    r:Math.random()*1.5+0.3,
+    a:Math.random()
+  });
+}
+function drawMenuStars() {
+  msCtx.clearRect(0,0,menuStarsCanvas.width,menuStarsCanvas.height);
+  menuStars.forEach(s => {
+    msCtx.beginPath();
+    msCtx.arc(s.x,s.y,s.r,0,TAU);
+    msCtx.fillStyle = `rgba(255,255,255,${0.3+s.a*0.7})`;
+    msCtx.fill();
+  });
+}
+initMenuStars();
+drawMenuStars();
+
+// ============================================================
+//  BUILDER
+// ============================================================
+function startBuilder() {
+  document.getElementById('menu').style.display='none';
+  document.getElementById('builder').style.display='flex';
+  document.getElementById('flightHUD').style.display='none';
+  document.getElementById('endScreen').style.display='none';
+  gameState = 'builder';
+  buildPalette();
+  renderBuilder();
+}
+function showMenu() {
+  stopSim();
+  document.getElementById('menu').style.display='flex';
+  document.getElementById('builder').style.display='none';
+  document.getElementById('flightHUD').style.display='none';
+  document.getElementById('endScreen').style.display='none';
+  gameState = 'menu';
+}
+function toggleControlsMenu() {
+  const m = document.getElementById('controlsMenu');
+  m.style.display = m.style.display==='none' ? 'block' : 'none';
+}
+function clearRocket() { blueprint = []; renderBuilder(); }
+
+function buildPalette() {
+  const list = document.getElementById('paletteList');
+  list.innerHTML = '';
+  Object.entries(PARTS).forEach(([key, p]) => {
+    const div = document.createElement('div');
+    div.className = 'palette-part';
+    div.innerHTML = `
+      <div class="palette-icon" style="background:${p.color}22;border:1px solid ${p.color}55">${p.icon}</div>
+      <div class="palette-info">
+        <div class="palette-name">${p.name}</div>
+        <div class="palette-desc">${p.desc}</div>
+      </div>`;
+    div.onclick = () => { blueprint.push(key); renderBuilder(); };
+    list.appendChild(div);
+  });
+}
+
+function loadQuickLaunch() {
+  blueprint = ['noseCone','capsule','tankLg','tankMd','separator','tankMd','engineSm','fins'];
+  startBuilder();
+}
+
+function getRocketStats() {
+  let dryMass=0, fuel=0, thrust=0, stages=1;
+  blueprint.forEach(k => {
+    const p = PARTS[k];
+    dryMass += p.mass;
+    if (p.fuelCap) fuel += p.fuelCap;
+    if (p.thrust)  thrust += p.thrust;
+    if (p.type==='separator') stages++;
+  });
+  return {dryMass, fuel, wetMass:dryMass+fuel, thrust, stages};
+}
+
+function renderBuilder() {
+  const rc = document.getElementById('rocketCanvas');
+  if (!rc) return;
+  const ctx2 = rc.getContext('2d');
+  ctx2.clearRect(0,0,rc.width,rc.height);
+
+  // Draw grid
+  ctx2.strokeStyle = '#0d1520';
+  ctx2.lineWidth=1;
+  const gs=24;
+  for(let x=0;x<rc.width;x+=gs){ ctx2.beginPath();ctx2.moveTo(x,0);ctx2.lineTo(x,rc.height);ctx2.stroke(); }
+  for(let y=0;y<rc.height;y+=gs){ ctx2.beginPath();ctx2.moveTo(0,y);ctx2.lineTo(rc.width,y);ctx2.stroke(); }
+
+  // Draw launch pad
+  const cx = rc.width/2;
+  let totalH = 0;
+  blueprint.forEach(k => totalH += PARTS[k].pixH + 2);
+  const startY = rc.height - 60 - totalH;
+
+  ctx2.fillStyle = '#1a2a1a';
+  ctx2.fillRect(cx-50, rc.height-60, 100, 60);
+  ctx2.fillStyle = '#2a3a2a';
+  ctx2.fillRect(cx-60, rc.height-12, 120, 12);
+
+  // Draw parts bottom-up
+  let y = rc.height - 60;
+  // We draw from last element (bottom) upward
+  const clickZones = [];
+  for (let i = blueprint.length-1; i>=0; i--) {
+    const key = blueprint[i];
+    const p = PARTS[key];
+    y -= p.pixH + 2;
+    const x = cx - p.pixW/2;
+    clickZones.push({x, y, w:p.pixW, h:p.pixH, i});
+    drawPart(ctx2, key, p, x, y, p.pixW, p.pixH);
+  }
+
+  // Stats
+  const stats = getRocketStats();
+  const statsDiv = document.getElementById('rocketStats');
+  const twr = stats.thrust / ((stats.wetMass)*9.81);
+  statsDiv.innerHTML = `
+    <div class="stats-row"><span>Dry Mass</span><span class="stats-val">${(stats.dryMass/1000).toFixed(1)} t</span></div>
+    <div class="stats-row"><span>Fuel</span><span class="stats-val">${(stats.fuel/1000).toFixed(1)} t</span></div>
+    <div class="stats-row"><span>Wet Mass</span><span class="stats-val">${(stats.wetMass/1000).toFixed(1)} t</span></div>
+    <div class="stats-row"><span>Thrust</span><span class="stats-val">${(stats.thrust/1000).toFixed(0)} kN</span></div>
+    <div class="stats-row"><span>TWR</span><span class="stats-val" style="color:${twr>=1?'#3dd68c':'#d64040'}">${twr.toFixed(2)}</span></div>
+    <div class="stats-row"><span>Stages</span><span class="stats-val">${stats.stages}</span></div>
+    <div class="stats-row"><span>Parts</span><span class="stats-val">${blueprint.length}</span></div>`;
+
+  // Click to remove part
+  rc.onclick = e => {
+    const rect = rc.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    for (const z of clickZones) {
+      if (mx>=z.x&&mx<=z.x+z.w&&my>=z.y&&my<=z.y+z.h) {
+        blueprint.splice(z.i,1);
+        renderBuilder();
+        return;
+      }
+    }
+  };
+}
+
+function drawPart(ctx2, key, p, x, y, w, h) {
+  const sep = p.type==='separator';
+  ctx2.save();
+  // Glow on hover (not implemented) – draw part
+  if (sep) {
+    ctx2.fillStyle = '#f0b020';
+    ctx2.fillRect(x, y+h/2-3, w, 6);
+    ctx2.fillStyle = '#f0d060';
+    ctx2.fillRect(x+4, y+h/2-1, w-8, 2);
+  } else if (p.type==='engine'||p.type==='engineLg') {
+    // Nozzle shape
+    ctx2.fillStyle = p.color;
+    ctx2.beginPath();
+    ctx2.moveTo(x+w*0.2, y);
+    ctx2.lineTo(x+w*0.8, y);
+    ctx2.lineTo(x+w*0.9, y+h);
+    ctx2.lineTo(x+w*0.1, y+h);
+    ctx2.closePath();
+    ctx2.fill();
+    ctx2.fillStyle='#333';
+    ctx2.fillRect(x+w*0.35, y+2, w*0.3, h*0.4);
+  } else if (p.type==='nose') {
+    ctx2.fillStyle = p.color;
+    ctx2.beginPath();
+    ctx2.moveTo(x+w/2, y);
+    ctx2.lineTo(x+w, y+h);
+    ctx2.lineTo(x, y+h);
+    ctx2.closePath();
+    ctx2.fill();
+  } else if (p.type==='fins') {
+    ctx2.fillStyle = p.color;
+    // Main body fins
+    ctx2.beginPath();
+    ctx2.moveTo(x+w*0.25, y);
+    ctx2.lineTo(x+w*0.75, y);
+    ctx2.lineTo(x+w*0.75, y+h);
+    ctx2.lineTo(x+w, y+h);
+    ctx2.lineTo(x+w*0.75, y+h*0.5);
+    ctx2.lineTo(x+w*0.25, y+h*0.5);
+    ctx2.lineTo(x, y+h);
+    ctx2.lineTo(x+w*0.25, y+h);
+    ctx2.closePath();
+    ctx2.fill();
+  } else if (p.type==='parachute') {
+    ctx2.fillStyle = p.color;
+    ctx2.beginPath();
+    ctx2.arc(x+w/2, y+h/2, Math.min(w,h)/2-2, Math.PI, TAU);
+    ctx2.closePath();
+    ctx2.fill();
+    ctx2.strokeStyle='#c06020'; ctx2.lineWidth=1;
+    ctx2.beginPath();
+    ctx2.moveTo(x+w*0.3,y+h/2); ctx2.lineTo(x+w/2,y+h);
+    ctx2.moveTo(x+w*0.7,y+h/2); ctx2.lineTo(x+w/2,y+h);
+    ctx2.stroke();
+  } else {
+    // Default box part (tank, capsule, etc.)
+    ctx2.fillStyle = p.color;
+    ctx2.fillRect(x+2, y, w-4, h);
+    // Panel lines
+    if (p.type==='tank') {
+      ctx2.strokeStyle='rgba(0,0,0,0.2)'; ctx2.lineWidth=1;
+      for(let ly=y+10;ly<y+h-5;ly+=10){
+        ctx2.beginPath(); ctx2.moveTo(x+4,ly); ctx2.lineTo(x+w-4,ly); ctx2.stroke();
+      }
+    }
+    if (p.type==='capsule') {
+      ctx2.fillStyle='#222'; ctx2.fillRect(x+w*0.3,y+6,w*0.4,h*0.25);
+      ctx2.strokeStyle='#555'; ctx2.lineWidth=1;
+      ctx2.strokeRect(x+w*0.3,y+6,w*0.4,h*0.25);
+    }
+  }
+  // Border
+  ctx2.strokeStyle = 'rgba(255,255,255,0.08)';
+  ctx2.lineWidth = 1;
+  if (!sep && p.type!=='nose' && p.type!=='fins') ctx2.strokeRect(x+2,y,w-4,h);
+  ctx2.restore();
+}
+
+// ============================================================
+//  SIMULATION SETUP
+// ============================================================
+function launchRocket() {
+  const stats = getRocketStats();
+  if (blueprint.length === 0) { alert('Build a rocket first!'); return; }
+  if (stats.thrust === 0) { alert('Your rocket needs at least one engine!'); return; }
+  if (stats.fuel === 0) { alert('Your rocket needs at least one fuel tank!'); return; }
+
+  // Build simulation state
+  const parts = blueprint.map(k => ({...PARTS[k], key:k}));
+
+  // Group into stages by separator
+  const stages = [];
+  let currentStage = [];
+  for (const p of parts) {
+    if (p.type === 'separator') {
+      if (currentStage.length) stages.push(currentStage);
+      currentStage = [];
+    } else {
+      currentStage.push({...p});
+    }
+  }
+  if (currentStage.length) stages.push(currentStage);
+  stages.reverse(); // stage 0 = fires first (bottom), last stage = top
+
+  // Compute fuel per stage
+  stages.forEach(stage => {
+    let totalFuel = 0;
+    stage.forEach(p => { if(p.fuelCap) totalFuel += p.fuelCap; });
+    stage._totalFuel    = totalFuel;
+    stage._remainingFuel = totalFuel;
+    stage._thrust = stage.reduce((a,p)=>a+(p.thrust||0),0);
+    stage._fuelRate = stage.reduce((a,p)=>a+(p.fuelRate||0),0);
+    stage._dryMass = stage.reduce((a,p)=>a+p.mass,0);
+  });
+
+  // Launch position: on Earth surface (top of Earth, y-axis up)
+  const launchAlt = 0; // sea level
+  const launchR = EARTH.radius + launchAlt;
+
+  sim = {
+    stages,
+    currentStage: 0,
+
+    // Position (m) from Earth center
+    px: 0,
+    py: launchR,
+
+    // Velocity (m/s)
+    vx: 0,
+    vy: 0,
+
+    // Angle (radians, 0 = pointing up)
+    angle: 0,
+    angularVel: 0,
+
+    // Throttle 0..1
+    throttle: 0,
+    maxThrottle: 1,
+
+    // Parachute
+    parachuteDeployed: false,
+
+    // Sim time
+    time: 0,
+
+    // Moon angle at start
+    moonStartAngle: MOON.startAngle,
+
+    // Status
+    launched: true,
+    crashed: false,
+    landed: false,
+
+    // Trajectory (for map)
+    trajectory: [],
+    lastTrajTime: 0,
+  };
+
+  // Stars for flight
+  generateStars();
+
+  startFlight();
+}
+
+// ============================================================
+//  FLIGHT
+// ============================================================
+let animFrame = null;
+let lastTime = null;
+
+function startFlight() {
+  document.getElementById('builder').style.display='none';
+  document.getElementById('menu').style.display='none';
+  document.getElementById('flightHUD').style.display='block';
+  gameState = 'flight';
+
+  // Camera starts behind rocket
+  cam.x = sim.px; cam.y = sim.py;
+  cam.scale = 1/60;  // pixels per meter — will auto-adjust
+
+  resize();
+  lastTime = null;
+  cancelAnimationFrame(animFrame);
+  animFrame = requestAnimationFrame(gameLoop);
+
+  showStatus('IGNITION', 1200);
+}
+
+function stopSim() {
+  cancelAnimationFrame(animFrame);
+  animFrame = null;
+  sim = null;
+  mapMode = false;
+  warpIdx = 0;
+  document.getElementById('flightHUD').style.display='none';
+}
+
+let stars = [];
+function generateStars() {
+  stars = [];
+  for (let i=0;i<800;i++) {
+    const r = EARTH.radius*2.5 + Math.random()*EARTH.radius*100;
+    const a = Math.random()*TAU;
+    stars.push({
+      wx: Math.cos(a)*r,
+      wy: Math.sin(a)*r,
+      size: Math.random()*1.5+0.2,
+      bright: 0.3+Math.random()*0.7
+    });
+  }
+}
+
+// ---- Physics ----
+function getMoonPos(t) {
+  const angle = sim.moonStartAngle + (t / MOON.period) * TAU;
+  return {
+    x: Math.cos(angle)*MOON.orbitRadius,
+    y: Math.sin(angle)*MOON.orbitRadius,
+    angle
+  };
+}
+
+function getAtmDensity(alt) {
+  if (alt >= EARTH.atmosphereHeight) return 0;
+  if (alt < 0) return EARTH.seaLevelDensity;
+  return EARTH.seaLevelDensity * Math.exp(-alt / EARTH.scaleHeight);
+}
+
+function physicsStep(dt) {
+  if (!sim || sim.crashed || sim.landed) return;
+
+  const px = sim.px, py = sim.py;
+  const vx = sim.vx, vy = sim.vy;
+
+  // --- Gravity from Earth ---
+  const rE = Math.sqrt(px*px+py*py);
+  const aEx = -EARTH.gm*px / (rE*rE*rE);
+  const aEy = -EARTH.gm*py / (rE*rE*rE);
+
+  // --- Gravity from Moon ---
+  const moon = getMoonPos(sim.time);
+  const dMx = px - moon.x, dMy = py - moon.y;
+  const rM = Math.sqrt(dMx*dMx+dMy*dMy);
+  const aMx = -MOON.gm*dMx / (rM*rM*rM);
+  const aMy = -MOON.gm*dMy / (rM*rM*rM);
+
+  // --- Thrust ---
+  const stage = sim.stages[sim.currentStage];
+  let fTx=0, fTy=0;
+  let totalMass = getTotalMass();
+  if (stage && stage._remainingFuel>0 && sim.throttle>0) {
+    const thrust = stage._thrust * sim.throttle;
+    // Radial outward unit vector (from Earth center to rocket)
+    const nx = px/rE, ny = py/rE;
+    // Rotate by sim.angle (clockwise positive, 0=straight up from Earth)
+    const tFwdX = nx*Math.cos(sim.angle) + ny*Math.sin(sim.angle);
+    const tFwdY = ny*Math.cos(sim.angle) - nx*Math.sin(sim.angle);
+    fTx = tFwdX * thrust / totalMass;
+    fTy = tFwdY * thrust / totalMass;
+    // Consume fuel
+    const fuelUsed = stage._fuelRate * sim.throttle * dt;
+    stage._remainingFuel = Math.max(0, stage._remainingFuel - fuelUsed);
+  }
+
+  // --- Drag ---
+  const alt = rE - EARTH.radius;
+  const density = getAtmDensity(alt);
+  let dragX=0, dragY=0;
+  if (density > 0) {
+    const speed = Math.sqrt(vx*vx+vy*vy);
+    if (speed > 0.01) {
+      const cd = sim.parachuteDeployed ? 3.0 : 0.3;
+      const area = 10; // m²
+      const dragForce = 0.5 * density * speed*speed * cd * area;
+      dragX = -dragForce * vx/speed / totalMass;
+      dragY = -dragForce * vy/speed / totalMass;
+    }
+  }
+
+  // --- Integrate ---
+  const ax = aEx + aMx + fTx + dragX;
+  const ay = aEy + aMy + fTy + dragY;
+  sim.vx += ax * dt;
+  sim.vy += ay * dt;
+  sim.px += sim.vx * dt;
+  sim.py += sim.vy * dt;
+
+  // --- Rotation (keyboard driven, with slight damping) ---
+  sim.angularVel *= 0.95;
+  sim.angle += sim.angularVel * dt;
+
+  // --- Trajectory record ---
+  if (sim.time - sim.lastTrajTime > 30) {
+    sim.trajectory.push({x:sim.px, y:sim.py, t:sim.time});
+    if (sim.trajectory.length > 500) sim.trajectory.shift();
+    sim.lastTrajTime = sim.time;
+  }
+
+  // --- Collision check ---
+  const moonPos = getMoonPos(sim.time);
+  const distMoon = Math.sqrt((sim.px-moonPos.x)**2+(sim.py-moonPos.y)**2);
+
+  if (rE <= EARTH.radius + 2) {
+    const landSpeed = Math.sqrt(sim.vx*sim.vx+sim.vy*sim.vy);
+    if (landSpeed < 50 || sim.parachuteDeployed) {
+      sim.landed = true; sim.vx=0; sim.vy=0;
+      const isFirst = sim.currentStage >= sim.stages.length-1;
+      endFlight('LANDED', '🌍 Successful landing on Earth! Speed: '+landSpeed.toFixed(0)+' m/s');
+    } else {
+      sim.crashed = true;
+      endFlight('DESTROYED', '💥 Rocket crashed into Earth at '+landSpeed.toFixed(0)+' m/s');
+    }
+  }
+  if (distMoon <= MOON.radius + 2) {
+    const landSpeed = Math.sqrt(sim.vx*sim.vx+sim.vy*sim.vy);
+    if (landSpeed < 30) {
+      sim.landed = true; sim.vx=0; sim.vy=0;
+      endFlight('MOON LANDING! 🌕', 'Historic lunar landing at ' + landSpeed.toFixed(0)+' m/s — Mission Success!');
+    } else {
+      sim.crashed = true;
+      endFlight('DESTROYED', '💥 Rocket crashed into the Moon at '+landSpeed.toFixed(0)+' m/s');
+    }
+  }
+
+  sim.time += dt;
+}
+
+function getTotalMass() {
+  let m = 0;
+  sim.stages.forEach((stage, i) => {
+    if (i >= sim.currentStage) {
+      stage.forEach(p => { m += p.mass; });
+      m += stage._remainingFuel || 0;
+    }
+  });
+  return Math.max(m, 1);
+}
+
+function getTotalFuel() {
+  let total=0, remaining=0;
+  sim.stages.forEach((stage,i) => {
+    if (i >= sim.currentStage) {
+      total += stage._totalFuel||0;
+      remaining += stage._remainingFuel||0;
+    }
+  });
+  return {total, remaining};
+}
+
+function activateStage() {
+  if (!sim) return;
+  const stage = sim.stages[sim.currentStage];
+  if (!stage) return;
+  // Move to next stage
+  if (sim.currentStage < sim.stages.length-1) {
+    sim.currentStage++;
+    showStatus('STAGE '+(sim.currentStage+1), 1000);
+    document.getElementById('stageBtn').classList.add('active');
+    setTimeout(()=>document.getElementById('stageBtn').classList.remove('active'),600);
+  } else {
+    showStatus('NO MORE STAGES',800);
+  }
+  // Also deploy parachute if available
+  const hasChute = sim.stages[sim.currentStage]?.some(p=>p.type==='parachute');
+  if (hasChute) { sim.parachuteDeployed = true; showStatus('PARACHUTE DEPLOYED',1200); }
+}
+
+// ============================================================
+//  GAME LOOP
+// ============================================================
+function gameLoop(now) {
+  if (!lastTime) lastTime = now;
+  let rawDt = Math.min((now - lastTime)/1000, 0.1);
+  lastTime = now;
+
+  if (sim && !sim.crashed && !sim.landed) {
+    const warp = WARP_LEVELS[warpIdx];
+    const simDt = rawDt * warp;
+    // Substep for accuracy at high warp
+    const steps = warp <= 10 ? 1 : warp <= 100 ? 4 : 16;
+    const subDt  = simDt / steps;
+    for (let i=0;i<steps;i++) physicsStep(subDt);
+    handleInput(rawDt);
+  }
+
+  render();
+  updateHUD();
+
+  animFrame = requestAnimationFrame(gameLoop);
+}
+
+function handleInput(dt) {
+  if (!sim) return;
+  const ROTATE_RATE = 1.2; // rad/s
+  const THROTTLE_RATE = 0.8;
+  if (keys['KeyA']||keys['ArrowLeft'])  sim.angularVel -= ROTATE_RATE*dt;
+  if (keys['KeyD']||keys['ArrowRight']) sim.angularVel += ROTATE_RATE*dt;
+  if (keys['KeyW']||keys['ArrowUp'])    sim.throttle = Math.min(1, sim.throttle + THROTTLE_RATE*dt);
+  if (keys['KeyS']||keys['ArrowDown'])  sim.throttle = Math.max(0, sim.throttle - THROTTLE_RATE*dt);
+}
+
+function onKeyDown(e) {
+  if (e.code==='Space' && gameState==='flight') { e.preventDefault(); activateStage(); }
+  if (e.code==='KeyM'  && gameState==='flight') toggleMap();
+  if (e.code==='Comma' && gameState==='flight') changeTimeWarp(-1);
+  if (e.code==='Period'&& gameState==='flight') changeTimeWarp(1);
+}
+
+function onWheel(e) {
+  if (gameState!=='flight'||!mapMode) return;
+  e.preventDefault();
+  cam.targetScale *= e.deltaY < 0 ? 1.2 : 0.833;
+  cam.targetScale = Math.max(1e-9, Math.min(1e-3, cam.targetScale));
+}
+
+function toggleMap() {
+  mapMode = !mapMode;
+  document.getElementById('mapToggleBtn').classList.toggle('active', mapMode);
+  document.getElementById('mapInfo').style.display = mapMode ? 'block' : 'none';
+  document.getElementById('orbitInfo').style.display = mapMode ? 'flex' : 'none';
+  if (!mapMode) {
+    // Reset camera to follow rocket
+    cam.targetScale = getAutoScale();
+  } else {
+    cam.targetScale = 1/(EARTH.radius*3.5);
+  }
+}
+
+function changeTimeWarp(dir) {
+  warpIdx = Math.max(0, Math.min(WARP_LEVELS.length-1, warpIdx+dir));
+  document.getElementById('timeWarpVal').textContent = WARP_LEVELS[warpIdx]+'×';
+}
+
+function getAutoScale() {
+  if (!sim) return 1/200;
+  const alt = Math.sqrt(sim.px*sim.px+sim.py*sim.py) - EARTH.radius;
+  if (alt < 50000) return 1/60;
+  if (alt < 500000) return 1/600;
+  if (alt < 5000000) return 1/6000;
+  if (alt < 100000000) return 1/200000;
+  return 1/1500000;
+}
+
+// ============================================================
+//  RENDER
+// ============================================================
+function render() {
+  if (gameState!=='flight') return;
+
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  if (!sim) return;
+
+  // Update camera
+  if (!mapMode) {
+    cam.targetScale = getAutoScale();
+    cam.x += (sim.px - cam.x)*0.08;
+    cam.y += (sim.py - cam.y)*0.08;
+  } else {
+    cam.x += (0 - cam.x)*0.05;
+    cam.y += (0 - cam.y)*0.05;
+  }
+  cam.scale += (cam.targetScale - cam.scale)*0.08;
+
+  const cx = canvas.width/2, cy = canvas.height/2;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(cam.scale, -cam.scale); // y-flip for world space
+  ctx.translate(-cam.x, -cam.y);
+
+  // Stars
+  drawStars();
+
+  // Moon orbit path (faint)
+  if (mapMode) {
+    ctx.beginPath();
+    ctx.arc(0,0,MOON.orbitRadius,0,TAU);
+    ctx.strokeStyle='rgba(255,255,255,0.04)';
+    ctx.lineWidth = 1/cam.scale;
+    ctx.stroke();
+  }
+
+  // Earth
+  drawEarth();
+
+  // Moon
+  drawMoon();
+
+  // Trajectory
+  if (sim.trajectory.length > 1) {
+    ctx.beginPath();
+    ctx.moveTo(sim.trajectory[0].x, sim.trajectory[0].y);
+    for (let i=1;i<sim.trajectory.length;i++) {
+      ctx.lineTo(sim.trajectory[i].x, sim.trajectory[i].y);
+    }
+    ctx.strokeStyle='rgba(80,180,255,0.35)';
+    ctx.lineWidth=1/cam.scale*2;
+    ctx.setLineDash([4/cam.scale, 4/cam.scale]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Predicted orbit (in map mode)
+  if (mapMode) drawOrbitPrediction();
+
+  // Rocket
+  drawRocket();
+
+  ctx.restore();
+}
+
+function drawStars() {
+  stars.forEach(s => {
+    ctx.beginPath();
+    ctx.arc(s.wx, s.wy, s.size/cam.scale, 0, TAU);
+    ctx.fillStyle = `rgba(255,255,255,${s.bright})`;
+    ctx.fill();
+  });
+}
+
+function drawEarth() {
+  const R = EARTH.radius;
+  const atR = R + EARTH.atmosphereHeight;
+
+  // Atmosphere glow
+  const atmoGrad = ctx.createRadialGradient(0,0,R*0.95, 0,0,atR);
+  atmoGrad.addColorStop(0,'rgba(80,140,255,0.25)');
+  atmoGrad.addColorStop(0.5,'rgba(60,110,220,0.1)');
+  atmoGrad.addColorStop(1,'rgba(40,80,180,0)');
+  ctx.beginPath(); ctx.arc(0,0,atR,0,TAU);
+  ctx.fillStyle=atmoGrad; ctx.fill();
+
+  // Ocean
+  ctx.beginPath(); ctx.arc(0,0,R,0,TAU);
+  ctx.fillStyle='#0a2a5a'; ctx.fill();
+
+  // Land continents (stylized patches)
+  drawContinents(R);
+
+  // Atmosphere inner rim
+  const rimGrad = ctx.createRadialGradient(0,0,R*0.97, 0,0,R*1.03);
+  rimGrad.addColorStop(0,'rgba(100,160,255,0.0)');
+  rimGrad.addColorStop(0.5,'rgba(100,160,255,0.15)');
+  rimGrad.addColorStop(1,'rgba(100,160,255,0)');
+  ctx.beginPath(); ctx.arc(0,0,R*1.03,0,TAU);
+  ctx.fillStyle=rimGrad; ctx.fill();
+
+  // Cloud layer
+  ctx.save();
+  ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.clip();
+  ctx.fillStyle='rgba(255,255,255,0.04)';
+  // Simple cloud blobs
+  [[1.2,0.5],[-0.8,0.7],[0.3,-0.9],[-0.5,-0.3],[0.9,-0.4]].forEach(([fx,fy])=>{
+    ctx.beginPath(); ctx.ellipse(fx*R,fy*R, R*0.18,R*0.06, Math.atan2(fy,fx), 0,TAU);
+    ctx.fill();
+  });
+  ctx.restore();
+}
+
+function drawContinents(R) {
+  ctx.save();
+  ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.clip();
+  ctx.fillStyle='#1a4a2a';
+  // Rough land patches
+  const patches = [
+    [0.15,0.6,0.22,0.28,-0.2],  // North America
+    [0.5,0.55,0.13,0.3,0.3],    // Europe
+    [0.55,0.2,0.18,0.35,0.5],   // Africa
+    [0.8,0.4,0.22,0.28,0.1],    // Asia
+    [-0.3,0.35,0.18,0.22,-0.4], // South America
+    [0.6,-0.6,0.18,0.2,0.2],    // Australia
+  ];
+  patches.forEach(([fx,fy,rw,rh,rot])=>{
+    ctx.beginPath();
+    ctx.ellipse(fx*R,fy*R, rw*R,rh*R, rot, 0,TAU);
+    ctx.fill();
+  });
+  // Ice caps
+  ctx.fillStyle='rgba(220,240,255,0.6)';
+  ctx.beginPath(); ctx.ellipse(0,R*0.97,R*0.15,R*0.06, 0, 0, TAU); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(0,-R*0.96,R*0.2,R*0.08, 0, 0, TAU); ctx.fill();
+  ctx.restore();
+}
+
+function drawMoon() {
+  const moon = getMoonPos(sim.time);
+  const R = MOON.radius;
+
+  ctx.save();
+  ctx.translate(moon.x, moon.y);
+
+  // Glow (faint)
+  const glowGrad = ctx.createRadialGradient(0,0,R,0,0,R*1.15);
+  glowGrad.addColorStop(0,'rgba(200,200,180,0.08)');
+  glowGrad.addColorStop(1,'rgba(200,200,180,0)');
+  ctx.beginPath(); ctx.arc(0,0,R*1.15,0,TAU);
+  ctx.fillStyle=glowGrad; ctx.fill();
+
+  // Moon surface
+  const moonGrad = ctx.createRadialGradient(-R*0.2,R*0.2,0, 0,0,R);
+  moonGrad.addColorStop(0,'#bbbab0');
+  moonGrad.addColorStop(0.6,'#9a9890');
+  moonGrad.addColorStop(1,'#6a6860');
+  ctx.beginPath(); ctx.arc(0,0,R,0,TAU);
+  ctx.fillStyle=moonGrad; ctx.fill();
+
+  // Craters
+  ctx.fillStyle='rgba(0,0,0,0.12)';
+  [[0.3,0.4,0.12],[-0.4,-0.2,0.09],[0.1,-0.5,0.07],
+   [-0.2,0.3,0.06],[0.5,-0.1,0.05],[-0.5,0.4,0.08]].forEach(([fx,fy,fr])=>{
+    ctx.beginPath(); ctx.arc(fx*R,fy*R,fr*R,0,TAU); ctx.fill();
+  });
+
+  ctx.restore();
+
+  // Moon label in map mode
+  if (mapMode) {
+    const screenX = (moon.x - cam.x)*cam.scale + canvas.width/2;
+    const screenY = -(moon.y - cam.y)*cam.scale + canvas.height/2;
+    ctx.save();
+    ctx.setTransform(1,0,0,1,0,0);
+    ctx.fillStyle='rgba(200,200,200,0.7)';
+    ctx.font='12px Courier New';
+    ctx.textAlign='center';
+    ctx.fillText('Moon', screenX, screenY - R*cam.scale - 8);
+    ctx.restore();
+  }
+}
+
+function drawRocket() {
+  if (!sim) return;
+  const rx = sim.px, ry = sim.py;
+
+  ctx.save();
+  ctx.translate(rx, ry);
+
+  // The rocket nose points along the thrust vector.
+  // Radial outward direction at (px, py): angle from +x axis = atan2(py, px)
+  // sim.angle = 0 means nose along radial outward; positive = clockwise tilt
+  const radialAng = Math.atan2(ry, rx); // angle of outward direction in world
+  // In canvas (y flipped), world angle θ renders as -θ.
+  // We want rocket to face "outward" rotated by sim.angle.
+  // Canvas rotation to match: -(radialAng) then +sim.angle in flipped space
+  // = -(radialAng - sim.angle) ... let's derive carefully.
+  // World forward direction: rotated radial by sim.angle CW = angle (radialAng - sim.angle) from +x
+  // In canvas (y flipped), render angle = -(world angle) + π/2 so nose points "up" in local frame
+  // We draw rocket "upward" locally (nose at top of pixH stack), so:
+  const canvasRot = -(radialAng - sim.angle) - Math.PI/2;
+  ctx.rotate(canvasRot);
+
+  // Scale rocket parts to world size — size grows with zoom
+  const pixScale = Math.max(1/cam.scale * 0.012, 2000);
+  ctx.scale(pixScale, pixScale);
+
+  // Draw parts (top to bottom in rocket frame, but we draw bottom of rocket first)
+  const allParts = [];
+  for (let si=sim.stages.length-1; si>=sim.currentStage; si--) {
+    sim.stages[si].forEach(p=>allParts.push(p));
+  }
+
+  let yOff = 0; // offset from center bottom
+  const totalH = allParts.reduce((a,p)=>a+(p.pixH||40)+2,0);
+  yOff = totalH/2;
+
+  allParts.forEach((p,i) => {
+    const ph = (p.pixH||40), pw = (p.pixW||48);
+    const localY = yOff - ph;
+    drawPartMini(ctx, p, -pw/2, localY, pw, ph);
+    yOff -= ph+2;
+  });
+
+  // Engine flame
+  const stage = sim.stages[sim.currentStage];
+  if (stage && stage._remainingFuel>0 && sim.throttle>0) {
+    const fLen = 60+Math.random()*40;
+    const fWid = 20;
+    const flameGrad = ctx.createLinearGradient(0,totalH/2, 0, totalH/2+fLen);
+    flameGrad.addColorStop(0,'rgba(255,180,50,0.9)');
+    flameGrad.addColorStop(0.4,'rgba(255,100,20,0.7)');
+    flameGrad.addColorStop(1,'rgba(255,50,0,0)');
+    ctx.beginPath();
+    ctx.moveTo(-fWid/2, totalH/2);
+    ctx.quadraticCurveTo(fWid*(Math.random()-0.5), totalH/2+fLen*0.5, 0, totalH/2+fLen);
+    ctx.quadraticCurveTo(fWid*(Math.random()-0.5), totalH/2+fLen*0.5, fWid/2, totalH/2);
+    ctx.fillStyle=flameGrad;
+    ctx.fill();
+  }
+
+  ctx.restore();
+}
+
+function drawPartMini(ctx2, p, x, y, w, h) {
+  if (p.type==='separator') {
+    ctx2.fillStyle='#f0b020'; ctx2.fillRect(x,y+h/2-2,w,4);
+    return;
+  }
+  if (p.type==='nose') {
+    ctx2.fillStyle=p.color||'#c0c0c0';
+    ctx2.beginPath(); ctx2.moveTo(x+w/2,y); ctx2.lineTo(x+w,y+h); ctx2.lineTo(x,y+h); ctx2.closePath();
+    ctx2.fill(); return;
+  }
+  if (p.type==='engine') {
+    ctx2.fillStyle=p.color||'#666';
+    ctx2.beginPath();
+    ctx2.moveTo(x+w*0.2,y); ctx2.lineTo(x+w*0.8,y);
+    ctx2.lineTo(x+w,y+h); ctx2.lineTo(x,y+h); ctx2.closePath();
+    ctx2.fill(); return;
+  }
+  if (p.type==='fins') {
+    ctx2.fillStyle=p.color||'#9aa';
+    ctx2.beginPath();
+    ctx2.moveTo(x+w*0.25,y); ctx2.lineTo(x+w*0.75,y);
+    ctx2.lineTo(x+w,y+h); ctx2.lineTo(x+w*0.75,y+h*0.5);
+    ctx2.lineTo(x+w*0.25,y+h*0.5); ctx2.lineTo(x,y+h);
+    ctx2.closePath(); ctx2.fill(); return;
+  }
+  ctx2.fillStyle=p.color||'#ccc';
+  ctx2.fillRect(x,y,w,h);
+}
+
+function drawOrbitPrediction() {
+  if (!sim) return;
+  // Propagate orbit using simple Keplerian elements
+  const px=sim.px, py=sim.py, vx=sim.vx, vy=sim.vy;
+  const points=[];
+  let ppx=px,ppy=py,pvx=vx,pvy=vy;
+  const steps=400, dt2=30; // 30s steps
+  for(let i=0;i<steps;i++){
+    const rr=Math.sqrt(ppx*ppx+ppy*ppy);
+    const ax=-EARTH.gm*ppx/(rr*rr*rr);
+    const ay=-EARTH.gm*ppy/(rr*rr*rr);
+    pvx+=ax*dt2; pvy+=ay*dt2;
+    ppx+=pvx*dt2; ppy+=pvy*dt2;
+    const nr=Math.sqrt(ppx*ppx+ppy*ppy);
+    if(nr<EARTH.radius) break;
+    points.push({x:ppx,y:ppy});
+  }
+  if(points.length>2){
+    ctx.beginPath();
+    ctx.moveTo(points[0].x,points[0].y);
+    for(let i=1;i<points.length;i++) ctx.lineTo(points[i].x,points[i].y);
+    ctx.strokeStyle='rgba(80,220,150,0.3)';
+    ctx.lineWidth=2/cam.scale;
+    ctx.setLineDash([6/cam.scale,6/cam.scale]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Apoapsis/periapsis markers
+    let maxR=0,minR=Infinity,apPt=null,pePt=null;
+    points.forEach(pt=>{
+      const r=Math.sqrt(pt.x*pt.x+pt.y*pt.y);
+      if(r>maxR){maxR=r;apPt=pt;}
+      if(r<minR){minR=r;pePt=pt;}
+    });
+    if(apPt){
+      ctx.beginPath(); ctx.arc(apPt.x,apPt.y,4/cam.scale,0,TAU);
+      ctx.fillStyle='#3dd68c'; ctx.fill();
+    }
+    if(pePt){
+      ctx.beginPath(); ctx.arc(pePt.x,pePt.y,4/cam.scale,0,TAU);
+      ctx.fillStyle='#d64040'; ctx.fill();
+    }
+    // Update orbit info
+    const apAlt = (maxR-EARTH.radius)/1000;
+    const peAlt = (minR-EARTH.radius)/1000;
+    if(apPt) document.getElementById('o-ap').textContent = fmtAlt(apAlt*1000);
+    if(pePt) document.getElementById('o-pe').textContent = fmtAlt(peAlt*1000);
+  }
+}
+
+// ---- HUD ----
+function updateHUD() {
+  if (!sim) return;
+  const rE = Math.sqrt(sim.px*sim.px+sim.py*sim.py);
+  const alt = rE - EARTH.radius;
+  const spd = Math.sqrt(sim.vx*sim.vx+sim.vy*sim.vy);
+
+  // Radial unit vector (outward)
+  const rx0=sim.px/rE, ry0=sim.py/rE;
+  const vertSpd   = sim.vx*rx0 + sim.vy*ry0;
+  const horizSpd  = Math.sqrt(Math.max(0, spd*spd - vertSpd*vertSpd));
+
+  const {total, remaining} = getTotalFuel();
+  const fuelPct = total>0 ? remaining/total*100 : 0;
+
+  const stage = sim.stages[sim.currentStage];
+  const nearMoon = Math.sqrt((sim.px-getMoonPos(sim.time).x)**2+(sim.py-getMoonPos(sim.time).y)**2) < MOON.radius*3;
+
+  document.getElementById('t-alt').textContent = fmtAlt(alt);
+  document.getElementById('t-spd').textContent = fmtSpd(spd);
+  document.getElementById('t-vspd').textContent = (vertSpd>=0?'+':'')+fmtSpd(vertSpd);
+  document.getElementById('t-hspd').textContent = fmtSpd(horizSpd);
+  document.getElementById('t-fuel').textContent = fuelPct.toFixed(1)+'%';
+  document.getElementById('t-stage').textContent = (sim.currentStage+1)+'/'+sim.stages.length;
+  document.getElementById('t-body').textContent = nearMoon?'Moon':'Earth';
+
+  // Throttle
+  document.getElementById('throttleFill').style.height = (sim.throttle*100)+'%';
+  document.getElementById('throttleVal').textContent = Math.round(sim.throttle*100)+'%';
+
+  // Orbit info (only if in orbit)
+  if(mapMode && alt > 50000) {
+    const ecc = computeEccentricity();
+    const period = computePeriod();
+    document.getElementById('o-ecc').textContent = ecc.toFixed(4);
+    document.getElementById('o-period').textContent = fmtTime(period);
+  }
+}
+
+function computeEccentricity() {
+  if(!sim)return 0;
+  const px=sim.px,py=sim.py,vx=sim.vx,vy=sim.vy;
+  const r=Math.sqrt(px*px+py*py);
+  const v2=vx*vx+vy*vy;
+  const mu=EARTH.gm;
+  const eps=v2/2 - mu/r;
+  const a=-mu/(2*eps);
+  const hx=px*vy-py*vx; // angular momentum z
+  const e=Math.sqrt(Math.max(0,1-hx*hx/(mu*a)));
+  return e;
+}
+function computePeriod() {
+  if(!sim)return 0;
+  const r=Math.sqrt(sim.px*sim.px+sim.py*sim.py);
+  const v2=sim.vx*sim.vx+sim.vy*sim.vy;
+  const eps=v2/2-EARTH.gm/r;
+  if(eps>=0) return 0;
+  const a=-EARTH.gm/(2*eps);
+  return TAU*Math.sqrt(a*a*a/EARTH.gm);
+}
+
+function fmtAlt(m) {
+  if(Math.abs(m)<1000) return m.toFixed(0)+' m';
+  if(Math.abs(m)<1e6)  return (m/1000).toFixed(1)+' km';
+  return (m/1e6).toFixed(2)+' Mm';
+}
+function fmtSpd(ms) {
+  if(Math.abs(ms)<10000) return ms.toFixed(1)+' m/s';
+  return (ms/1000).toFixed(2)+' km/s';
+}
+function fmtTime(s) {
+  if(!s||!isFinite(s)) return '—';
+  if(s<3600) return (s/60).toFixed(1)+' min';
+  if(s<86400) return (s/3600).toFixed(2)+' hr';
+  return (s/86400).toFixed(2)+' days';
+}
+
+function showStatus(msg, dur=1500) {
+  const el = document.getElementById('statusMsg');
+  el.textContent=msg; el.style.display='block';
+  clearTimeout(el._timer);
+  el._timer=setTimeout(()=>el.style.display='none', dur);
+}
+
+function endFlight(title, msg) {
+  const es = document.getElementById('endScreen');
+  const isSuccess = !sim.crashed;
+  document.getElementById('endTitle').textContent=title;
+  document.getElementById('endTitle').style.color = isSuccess?'#3dd68c':'#d63d3d';
+  document.getElementById('endMsg').textContent=msg;
+  es.style.display='flex';
+}
+
+// ============================================================
+//  INIT
+// ============================================================
+function init() {
+  resize();
+  // Start menu
+  drawMenuStars();
+}
+init();
+</script>
+
+</body>
+</html>
