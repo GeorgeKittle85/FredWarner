@@ -937,9 +937,9 @@ function enterFlight() {
   document.getElementById('endScreen').style.display= 'none';
   gameState = 'flight';
 
+  cam.x = sim.px; cam.y = sim.py;
   cam.scale = cam.targetScale = autoScale();
-  cam.scale = cam.targetScale = autoScale() * 0.1;
-  
+
   lastTime  = null;
   warpIdx   = 0;
   mapMode   = false;
