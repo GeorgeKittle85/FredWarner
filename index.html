@@ -944,6 +944,7 @@ function buildSimAndFly() {
     // ---- CRASH PHYSICS ----
     hasBeenAirborne: false,   // Set true once alt > 50m; gates collision triggers
     integrity: 100,           // 0-100 vehicle health
+    aboveKarman: false,       // Has rocket crossed the Kármán line (100 km)
   };
 
   generateFlightStars();
@@ -976,8 +977,8 @@ function enterFlight() {
   gameState = 'flight';
 
   cam.x = sim.px; cam.y = sim.py;
-  // Set initial zoom to close-up view on launch pad
-  cam.scale = cam.targetScale = 1 / 60;
+  // Start at a scale that shows Earth curvature + rocket in context
+  cam.scale = cam.targetScale = 1 / 3000;
 
   lastTime  = null;
   warpIdx   = 0;
@@ -1120,6 +1121,16 @@ function physicsStep(dt) {
   }
 
   sim.time += dt;
+
+  // ---- Kármán line crossing notification ----
+  const curAlt = Math.sqrt(sim.px * sim.px + sim.py * sim.py) - EARTH.radius;
+  if (!sim.aboveKarman && curAlt >= 100_000) {
+    sim.aboveKarman = true;
+    showStatus('✦ KÁRMÁN LINE — YOU ARE IN SPACE', 2200);
+  } else if (sim.aboveKarman && curAlt < 100_000 && sim.hasBeenAirborne) {
+    sim.aboveKarman = false;
+    showStatus('RE-ENTRY', 1400);
+  }
 
   // ===========================================================
   //  COLLISION DETECTION — solid ground with crash physics
@@ -1365,29 +1376,6 @@ function renderFlight() {
   if (mapMode) drawOrbitPrediction();
   drawRocket();
 
-  // ---- Close-up ground surface indicator ----
-  if (!mapMode) {
-    const rE  = Math.sqrt(sim.px * sim.px + sim.py * sim.py);
-    const alt = rE - EARTH.radius;
-    if (alt < 3000) {
-      // Draw a bright green "ground strip" along the Earth surface near the rocket
-      // to make the ground clearly visible
-      const surfaceY = EARTH.radius;   // world y of surface directly below rocket (px≈0)
-      const surfW = 1200 / cam.scale;   // strip width in world units
-      gCtx.save();
-      gCtx.fillStyle = 'rgba(30,90,30,0.55)';
-      gCtx.fillRect(-surfW / 2, surfaceY - 60 / cam.scale, surfW, 60 / cam.scale);
-      // Ground line
-      gCtx.strokeStyle = 'rgba(60,180,60,0.7)';
-      gCtx.lineWidth = 3 / cam.scale;
-      gCtx.beginPath();
-      gCtx.moveTo(-surfW / 2, surfaceY);
-      gCtx.lineTo(surfW / 2, surfaceY);
-      gCtx.stroke();
-      gCtx.restore();
-    }
-  }
-
   gCtx.restore();
 }
 
@@ -1546,14 +1534,18 @@ function drawRocket() {
   const canvasRot = -(radialAng - sim.angle) - Math.PI / 2;
   gCtx.rotate(canvasRot);
 
-  const pxSc = Math.max(1 / cam.scale * 0.013, 1800);
-  gCtx.scale(pxSc, pxSc);
-
+  // Collect parts first so totalH is known before computing pxSc
   const parts = [];
   for (let si = sim.stages.length - 1; si >= sim.stageIdx; si--)
     for (const p of sim.stages[si]) parts.push(p);
 
   const totalH = parts.reduce((a, p) => a + (p.pixH || 40) + 2, 0);
+
+  // pxSc converts part-pixel units to world units so the rocket is always
+  // TARGET_PX tall on screen regardless of zoom level.
+  const TARGET_PX = 72;
+  const pxSc = TARGET_PX / (cam.scale * Math.max(totalH, 50));
+  gCtx.scale(pxSc, pxSc);
   let yOff = totalH / 2;
 
   for (const p of parts) {
@@ -1600,6 +1592,26 @@ function drawRocket() {
     gCtx.moveTo(-chuteR*0.55, chuteY); gCtx.lineTo(0, -(totalH/2));
     gCtx.moveTo( chuteR*0.55, chuteY); gCtx.lineTo(0, -(totalH/2));
     gCtx.stroke();
+  }
+
+  // ---- Reentry heating glow ----
+  // Show plasma sheath when moving fast through the upper atmosphere
+  const _reSpd = Math.sqrt(sim.vx*sim.vx + sim.vy*sim.vy);
+  const _reAlt = Math.sqrt(sim.px*sim.px + sim.py*sim.py) - EARTH.radius;
+  const _reRho = _reAlt < EARTH.atmosphereH && _reAlt >= 0
+    ? EARTH.rho0 * Math.exp(-_reAlt / EARTH.scaleH) : 0;
+  const _reHeat = Math.max(0, Math.min(1, (_reSpd - 3000) / 5000)) * Math.min(1, _reRho * 800);
+  if (_reHeat > 0.05) {
+    const hW = Math.max(totalH, 80) * 0.55;
+    const hGrad = gCtx.createRadialGradient(0, 0, 0, 0, 0, hW);
+    const alpha = (_reHeat * 0.75).toFixed(2);
+    hGrad.addColorStop(0,   `rgba(255,120,30,${alpha})`);
+    hGrad.addColorStop(0.5, `rgba(255,60,10,${(+alpha*0.5).toFixed(2)})`);
+    hGrad.addColorStop(1,   'rgba(255,30,0,0)');
+    gCtx.beginPath();
+    gCtx.ellipse(0, 0, hW, hW * 1.6, 0, 0, TAU);
+    gCtx.fillStyle = hGrad;
+    gCtx.fill();
   }
 
   gCtx.restore();
