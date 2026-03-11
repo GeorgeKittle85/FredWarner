@@ -937,8 +937,8 @@ function enterFlight() {
   document.getElementById('endScreen').style.display= 'none';
   gameState = 'flight';
 
-  cam.scale = cam.targetScale = autoScale();
-  cam.scale = cam.targetScale = autoScale() * 0.3;
+  -cam.scale = cam.targetScale = autoScale();
+  +cam.scale = cam.targetScale = autoScale() * 0.1;
 
   lastTime  = null;
   warpIdx   = 0;
