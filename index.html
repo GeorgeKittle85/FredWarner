@@ -273,7 +273,6 @@ margin-top:3px; opacity:.7;
   <h1>SPACEFLIGHT</h1>
   <div class="subtitle">Simulator</div>
   <button class="menu-btn" onclick="startBuilder()">🚀 Build &amp; Launch</button>
-  <button class="menu-btn" onclick="quickLaunch()">⚡ Quick Launch</button>
   <button class="menu-btn" onclick="toggleControlsMenu()">🎮 Controls</button>
   <div id="controlsMenu">
     <b style="color:#80c0e8">FLIGHT CONTROLS</b><br>
@@ -330,6 +329,8 @@ margin-top:3px; opacity:.7;
     <div class="tele-row"><span>Stage</span><span class="tele-val" id="t-stg">1/1</span></div>
     <div class="tele-row"><span>G-Force</span><span class="tele-val" id="t-gf">1.0 g</span></div>
     <div class="tele-row"><span>Body</span><span class="tele-val" id="t-body">Earth</span></div>
+    <div class="tele-row"><span>Δv Left</span><span class="tele-val" id="t-dv">— m/s</span></div>
+    <div class="tele-row"><span>Orb. Spd</span><span class="tele-val" id="t-vc">—</span></div>
   </div>
 
   <div id="orbitInfo">
@@ -355,6 +356,8 @@ margin-top:3px; opacity:.7;
 
   <div id="toolbar">
     <button class="tool-btn" onclick="showMenu()">← Menu</button>
+    <button class="tool-btn" onclick="restartLaunch()" title="Relaunch same rocket">↺ Relaunch</button>
+    <button class="tool-btn" onclick="restartAssembly()" title="Return to assembly">⚙ Assembly</button>
     <button class="tool-btn" id="mapBtn" onclick="toggleMap()">MAP [M]</button>
     <button class="tool-btn" onclick="zoomOut()" title="Zoom Out">🔍−</button>
     <button class="tool-btn" onclick="zoomIn()" title="Zoom In">🔍+</button>
@@ -405,6 +408,10 @@ const G          = 6.674e-11;
 const TAU        = Math.PI * 2;
 const MAX_PARTS  = 25;
 const WARP_LVL   = [1, 2, 5, 10, 50, 100, 500, 1000];
+
+// Physical scale: 1 builder-pixel = this many metres in world space.
+// A typical 200-px rocket becomes ~70 m tall — realistic for a medium launcher.
+const ROCKET_M_PER_PX = 0.35;
 
 const EARTH = {
   name: 'Earth',
@@ -488,6 +495,7 @@ let animFrame       = null;
 let lastTime        = null;
 let statusTimer     = null;
 let buildMsgTimer   = null;
+let preMMapScale    = null;   // saved zoom before entering map mode
 const keys          = {};
 const cam           = { x:0, y:0, scale:1/60, targetScale:1/60 };
 
@@ -977,8 +985,9 @@ function enterFlight() {
   gameState = 'flight';
 
   cam.x = sim.px; cam.y = sim.py;
-  // Start at a scale that shows Earth curvature + rocket in context
-  cam.scale = cam.targetScale = 1 / 3000;
+  // Start zoomed close to the rocket so it is visible as a real-world object.
+  // Players can scroll out to see the horizon, upper atmosphere, or full orbit.
+  cam.scale = cam.targetScale = 0.6;
 
   lastTime  = null;
   warpIdx   = 0;
@@ -997,9 +1006,23 @@ function stopSim() {
   sim       = null;
   mapMode   = false;
   warpIdx   = 0;
+  preMMapScale = null;
   document.getElementById('flightHUD').style.display = 'none';
   document.getElementById('endScreen').style.display = 'none';
   document.getElementById('warpVal').textContent = '1×';
+}
+
+// Re-launch the same blueprint without touching anything
+function restartLaunch() {
+  if (blueprint.length === 0) { showMenu(); return; }
+  stopSim();
+  buildSimAndFly();
+}
+
+// Return to the assembly builder with the current blueprint intact
+function restartAssembly() {
+  stopSim();
+  startBuilder();
 }
 
 function generateFlightStars() {
@@ -1016,7 +1039,7 @@ function generateFlightStars() {
 // ============================================================
 function zoomIn() {
   if (gameState !== 'flight') return;
-  cam.targetScale = Math.min(cam.targetScale * 1.6, 8e-4);
+  cam.targetScale = Math.min(cam.targetScale * 1.6, 3.0);
 }
 function zoomOut() {
   if (gameState !== 'flight') return;
@@ -1147,16 +1170,13 @@ function physicsStep(dt) {
   const vRadEarth = sim.vx * earthNX + sim.vy * earthNY; // + = moving away
 
   if (newRE <= EARTH.radius + 3) {
-    // ---- SOLID GROUND: push rocket back to surface ----
-    // Clamp position to surface
-    const pushScale = (EARTH.radius + 2) / Math.max(newRE, 1);
-    sim.px *= pushScale;
-    sim.py *= pushScale;
-
     if (vRadEarth < 0) {
-      // Approaching surface — record impact speed and zero radial velocity
+      // Approaching surface — clamp position and zero the inward radial velocity
+      const pushScale = (EARTH.radius + 2) / Math.max(newRE, 1);
+      sim.px *= pushScale;
+      sim.py *= pushScale;
+
       const impactSpeed = -vRadEarth;
-      // Remove radial component from velocity (tangential preserved)
       sim.vx -= vRadEarth * earthNX;
       sim.vy -= vRadEarth * earthNY;
 
@@ -1164,9 +1184,9 @@ function physicsStep(dt) {
       if (sim.hasBeenAirborne && !sim.landed && !sim.crashed) {
         handleImpact(impactSpeed, 'earth');
       }
+      return;
     }
-    // If vRadEarth >= 0 (moving away = liftoff), don't block — let the rocket go!
-    return;
+    // vRadEarth >= 0 means rocket is thrusting away from the surface — let it go freely.
   }
 
   // --- Moon surface ---
@@ -1284,8 +1304,8 @@ function handleInput(dt) {
   if (!sim) return;
   const ROT  = 1.1;
   const THR  = 0.9;
-  if (keys['KeyA'] || keys['ArrowLeft'])  sim.angVel -= ROT * dt;
-  if (keys['KeyD'] || keys['ArrowRight']) sim.angVel += ROT * dt;
+  if (keys['KeyA'] || keys['ArrowLeft'])  sim.angVel += ROT * dt;
+  if (keys['KeyD'] || keys['ArrowRight']) sim.angVel -= ROT * dt;
   if (keys['KeyW'] || keys['ArrowUp'])    sim.throttle = Math.min(1, sim.throttle + THR * dt);
   if (keys['KeyS'] || keys['ArrowDown'])  sim.throttle = Math.max(0, sim.throttle - THR * dt);
 }
@@ -1304,7 +1324,7 @@ function onWheel(e) {
   if (gameState !== 'flight') return;
   e.preventDefault();
   cam.targetScale *= e.deltaY < 0 ? 1.18 : 0.847;
-  cam.targetScale  = Math.max(1e-9, Math.min(8e-4, cam.targetScale));
+  cam.targetScale  = Math.max(1e-9, Math.min(3.0, cam.targetScale));
 }
 
 function toggleMap() {
@@ -1313,9 +1333,12 @@ function toggleMap() {
   document.getElementById('mapInfo').style.display   = mapMode ? 'block' : 'none';
   document.getElementById('orbitInfo').style.display = mapMode ? 'flex'  : 'none';
   if (mapMode) {
+    preMMapScale = cam.targetScale;           // save flight zoom
     cam.targetScale = 1 / (EARTH.radius * 3.8);
+  } else if (preMMapScale !== null) {
+    cam.targetScale = preMMapScale;           // restore flight zoom
+    preMMapScale = null;
   }
-  // In flight mode, user controls zoom manually — no auto-reset on map toggle off
 }
 
 function changeWarp(dir) {
@@ -1340,7 +1363,14 @@ function renderFlight() {
     cam.x += (0 - cam.x) * 0.05;
     cam.y += (0 - cam.y) * 0.05;
   }
-  cam.scale += (cam.targetScale - cam.scale) * 0.09;
+  // Log-space interpolation: each frame the current scale moves 12% of the way
+  // toward the target in log-space, giving the same *feel* at any zoom level.
+  if (cam.scale !== cam.targetScale) {
+    cam.scale *= Math.pow(cam.targetScale / cam.scale, 0.12);
+    if (Math.abs(cam.scale - cam.targetScale) / cam.targetScale < 1e-4) {
+      cam.scale = cam.targetScale;
+    }
+  }
 
   const cx = gameCanvas.width  / 2;
   const cy = gameCanvas.height / 2;
@@ -1380,9 +1410,13 @@ function renderFlight() {
 }
 
 function drawStars() {
+  // Star radius is kept constant in screen pixels by dividing by cam.scale.
+  // Clamp to avoid gigantic circles at extreme map-zoom levels.
+  const maxStarR = EARTH.radius * 0.08;
   for (const s of stars) {
+    const r = Math.min(s.sz / cam.scale, maxStarR);
     gCtx.beginPath();
-    gCtx.arc(s.wx, s.wy, s.sz / cam.scale, 0, TAU);
+    gCtx.arc(s.wx, s.wy, r, 0, TAU);
     gCtx.fillStyle = `rgba(255,255,255,${s.br.toFixed(2)})`;
     gCtx.fill();
   }
@@ -1541,10 +1575,10 @@ function drawRocket() {
 
   const totalH = parts.reduce((a, p) => a + (p.pixH || 40) + 2, 0);
 
-  // pxSc converts part-pixel units to world units so the rocket is always
-  // TARGET_PX tall on screen regardless of zoom level.
-  const TARGET_PX = 72;
-  const pxSc = TARGET_PX / (cam.scale * Math.max(totalH, 50));
+  // ROCKET_M_PER_PX converts builder-pixel units to world metres.
+  // The rocket now has a real physical size; the camera zoom determines
+  // how large it appears on screen — just like a real spacecraft.
+  const pxSc = ROCKET_M_PER_PX;
   gCtx.scale(pxSc, pxSc);
   let yOff = totalH / 2;
 
@@ -1732,6 +1766,17 @@ function updateHUD() {
   document.getElementById('t-gf').textContent   = sim.gforce.toFixed(2) + ' g';
   document.getElementById('t-body').textContent = nearM ? '🌕 Moon' : '🌍 Earth';
 
+  // ---- Delta-v remaining (Tsiolkovsky rocket equation, stage-by-stage) ----
+  document.getElementById('t-dv').textContent = fmtSpd(computeDeltaV());
+
+  // ---- Circular orbit speed at current altitude (vis-viva: v = √(GM/r)) ----
+  const vcBody  = nearM ? MOON.gm : EARTH.gm;
+  const vcR     = nearM
+    ? Math.sqrt((sim.px - moonPos().x)**2 + (sim.py - moonPos().y)**2)
+    : rE;
+  const vc      = Math.sqrt(vcBody / vcR);
+  document.getElementById('t-vc').textContent = fmtSpd(vc);
+
   document.getElementById('thrFill').style.height = (sim.throttle*100) + '%';
   document.getElementById('thrVal').textContent   = Math.round(sim.throttle*100) + '%';
 
@@ -1739,6 +1784,34 @@ function updateHUD() {
     document.getElementById('o-ecc').textContent = computeEcc().toFixed(4);
     document.getElementById('o-per').textContent = fmtTime(computePeriod());
   }
+}
+
+// ---- Delta-v remaining (Tsiolkovsky equation applied per remaining stage) ----
+// ve = F / ṁ  (effective exhaust velocity)
+// Δv = ve · ln(m_wet / m_dry)  summed over all remaining stages
+function computeDeltaV() {
+  if (!sim) return 0;
+  let dv = 0;
+  // Accumulate total mass of all remaining stages (payload perspective)
+  let totalRemMass = 0;
+  for (let si = sim.stageIdx; si < sim.stages.length; si++) {
+    const stg = sim.stages[si];
+    totalRemMass += stg._dryMass + (si === sim.stageIdx ? stg._fuel : stg._totalFuel);
+  }
+
+  let m0 = totalRemMass;
+  for (let si = sim.stageIdx; si < sim.stages.length; si++) {
+    const stg  = sim.stages[si];
+    const fuel = si === sim.stageIdx ? stg._fuel : stg._totalFuel;
+    if (!stg._fuelRate || !stg._thrust || fuel <= 0) continue;
+    const ve    = stg._thrust / stg._fuelRate;  // exhaust velocity (m/s)
+    const mDry  = m0 - fuel;
+    if (mDry > 0 && m0 > mDry) {
+      dv += ve * Math.log(m0 / mDry);
+    }
+    m0 = mDry; // next stage starts lighter (previous stage hardware dropped)
+  }
+  return dv;
 }
 
 function computeEcc() {
