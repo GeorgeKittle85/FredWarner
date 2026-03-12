@@ -429,7 +429,28 @@ const MOON = {
   orbitR: 384_400_000,
   period: 2_360_591.5,
   startAngle: 0.8,
+  soi: 6.61e7,           // sphere of influence radius (m)
 };
+
+// Sun position in Earth-centred sim frame (Earth is at origin, Sun 1 AU to the left)
+const SUN_POS = { x: -1.496e11, y: 0 };
+
+const MARS = {
+  name: 'Mars',
+  mass: 6.4171e23,
+  radius: 3_389_500,
+  gm: 4.282837e13,
+  semiMajor: 2.279e11,     // 1.524 AU from Sun in metres
+  period: 59_355_408,      // 686.97 Earth-days in seconds
+  startAngle: 0,           // at launch Mars is at angle 0 around Sun → ~78 Mm from Earth
+  atmosphereH: 70_000,     // effective top of Martian atmosphere (m)
+  scaleH: 11_100,          // scale height (m)
+  rho0: 0.020,             // surface air density kg/m³ (~1.6 % of Earth's)
+  soi: 5.77e8,             // sphere of influence radius (m)
+};
+
+// Earth SOI
+EARTH.soi = 9.25e8;
 
 // ---- Moon hard terrain (seeded, generated once) ----
 const MOON_TERRAIN_PTS = 360;
@@ -462,6 +483,34 @@ const MOON_TERRAIN = (() => {
     for (const rim of [-w - 1, w + 1]) {
       const idx = (pos + rim + MOON_TERRAIN_PTS) % MOON_TERRAIN_PTS;
       t[idx] += depth * 0.45;
+    }
+  }
+  return t;
+})();
+
+// ---- Mars hard terrain (seeded, generated once) ----
+const MARS_TERRAIN_PTS = 360;
+const MARS_TERRAIN = (() => {
+  let seed = 31415927;
+  function rng() {
+    seed = (seed * 1664525 + 1013904223) & 0xffffffff;
+    return (seed >>> 0) / 0xffffffff;
+  }
+  const t = new Float32Array(MARS_TERRAIN_PTS);
+  for (let i = 0; i < MARS_TERRAIN_PTS; i++) t[i] = (rng() - 0.5) * 0.016;
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i < MARS_TERRAIN_PTS; i++) {
+      t[i] = (t[(i-1+MARS_TERRAIN_PTS)%MARS_TERRAIN_PTS]*0.25 + t[i]*0.5 + t[(i+1)%MARS_TERRAIN_PTS]*0.25);
+    }
+  }
+  // Large volcano-style bumps and canyons
+  for (let c = 0; c < 10; c++) {
+    const pos = Math.floor(rng() * MARS_TERRAIN_PTS);
+    const h   = (rng() - 0.3) * 0.030;
+    const w   = 4 + Math.floor(rng() * 10);
+    for (let j = -w; j <= w; j++) {
+      const idx = (pos + j + MARS_TERRAIN_PTS) % MARS_TERRAIN_PTS;
+      t[idx] += h * (1 - Math.abs(j) / w);
     }
   }
   return t;
@@ -949,6 +998,7 @@ function buildSimAndFly() {
     chuteDestroyed: false,    // true once chute is burned off by throttle
     time: 0,
     moonAngle0: MOON.startAngle,
+    marsAngle0: MARS.startAngle,
     crashed: false,
     landed:  false,
     traj: [],
@@ -1032,10 +1082,17 @@ function restartAssembly() {
 
 function generateFlightStars() {
   stars = [];
-  for (let i = 0; i < 800; i++) {
+  // Near stars — visible in low Earth orbit
+  for (let i = 0; i < 600; i++) {
     const r = EARTH.radius * 2.5 + Math.random() * EARTH.radius * 100;
     const a = Math.random() * TAU;
     stars.push({ wx: Math.cos(a)*r, wy: Math.sin(a)*r, sz: Math.random()*1.4+0.2, br: 0.3+Math.random()*0.7 });
+  }
+  // Far stars — spread across the interplanetary region so stars remain visible near Mars
+  for (let i = 0; i < 400; i++) {
+    const r = EARTH.radius * 200 + Math.random() * 6e11;
+    const a = Math.random() * TAU;
+    stars.push({ wx: Math.cos(a)*r, wy: Math.sin(a)*r, sz: Math.random()*1.2+0.2, br: 0.2+Math.random()*0.6 });
   }
 }
 
@@ -1082,6 +1139,45 @@ function currentFuelPct() {
   return total > 0 ? rem / total * 100 : 0;
 }
 
+function marsPos() {
+  const a = (sim ? sim.marsAngle0 : MARS.startAngle) + ((sim ? sim.time : 0) / MARS.period) * TAU;
+  return {
+    x: SUN_POS.x + Math.cos(a) * MARS.semiMajor,
+    y: SUN_POS.y + Math.sin(a) * MARS.semiMajor,
+  };
+}
+
+// Returns the dominant gravitational body (SOI) for the rocket's current position.
+// Includes body position, GM, radius, and velocity for relative-frame calculations.
+function getSOI() {
+  if (!sim) return { body:'earth', gm:EARTH.gm, radius:EARTH.radius, bx:0, by:0, bvx:0, bvy:0 };
+
+  const mp   = moonPos();
+  const rMoon = Math.hypot(sim.px - mp.x, sim.py - mp.y);
+  if (rMoon < MOON.soi) {
+    const moonA = sim.moonAngle0 + (sim.time / MOON.period) * TAU;
+    const mw    = TAU / MOON.period;
+    return { body:'moon', gm:MOON.gm, radius:MOON.radius,
+             bx: mp.x, by: mp.y, dist: rMoon,
+             bvx: -mw * MOON.orbitR * Math.sin(moonA),
+             bvy:  mw * MOON.orbitR * Math.cos(moonA) };
+  }
+
+  const marp  = marsPos();
+  const rMars = Math.hypot(sim.px - marp.x, sim.py - marp.y);
+  if (rMars < MARS.soi) {
+    const marsA = sim.marsAngle0 + (sim.time / MARS.period) * TAU;
+    const marW  = TAU / MARS.period;
+    return { body:'mars', gm:MARS.gm, radius:MARS.radius,
+             bx: marp.x, by: marp.y, dist: rMars,
+             bvx: -marW * MARS.semiMajor * Math.sin(marsA),
+             bvy:  marW * MARS.semiMajor * Math.cos(marsA) };
+  }
+
+  const rE = Math.hypot(sim.px, sim.py);
+  return { body:'earth', gm:EARTH.gm, radius:EARTH.radius, bx:0, by:0, dist:rE, bvx:0, bvy:0 };
+}
+
 function physicsStep(dt) {
   if (!sim || sim.crashed || sim.landed) return;
 
@@ -1099,6 +1195,13 @@ function physicsStep(dt) {
   const gmX = -MOON.gm * dmx / (rM * rM * rM);
   const gmY = -MOON.gm * dmy / (rM * rM * rM);
 
+  // Mars gravity
+  const marp  = marsPos();
+  const dmarx = px - marp.x, dmary = py - marp.y;
+  const rMar  = Math.sqrt(dmarx * dmarx + dmary * dmary);
+  const gmarX = -MARS.gm * dmarx / (rMar * rMar * rMar);
+  const gmarY = -MARS.gm * dmary / (rMar * rMar * rMar);
+
   // Thrust
   let ftX = 0, ftY = 0;
   const stg  = sim.stages[sim.stageIdx];
@@ -1115,26 +1218,32 @@ function physicsStep(dt) {
   }
 
   // ---- Parachute throttle-destruction check ----
-  // If player fires engines above 10% throttle while chute is deployed, it burns off.
   if (sim.parachute && sim.throttle > 0.10) {
     sim.parachute      = false;
     sim.chuteDestroyed = true;
     showStatus('⚠ PARACHUTE BURNED OFF!', 2000);
   }
 
-  // Drag
-  const alt = rE - EARTH.radius;
-  const rho = atmDensity(alt);
+  // ---- Atmospheric drag — sum contributions from all nearby atmospheres ----
+  // Earth atmosphere
+  const altE = rE - EARTH.radius;
+  const rhoE = (altE >= 0 && altE < EARTH.atmosphereH)
+    ? EARTH.rho0 * Math.exp(-altE / EARTH.scaleH) : 0;
+
+  // Mars atmosphere (use distance already computed for gravity)
+  const altMars = rMar - MARS.radius;
+  const rhoMars = (altMars >= 0 && altMars < MARS.atmosphereH)
+    ? MARS.rho0 * Math.exp(-altMars / MARS.scaleH) : 0;
+
+  const rho = rhoE + rhoMars;   // only one will be non-zero in practice
   let fdX = 0, fdY = 0;
   if (rho > 0) {
     const spd = Math.sqrt(vx * vx + vy * vy);
     if (spd > 0.01) {
       let cd;
       if (sim.parachute) {
-        // Compute a Cd that gives the desired mass-dependent terminal velocity.
-        // Target: ~3 m/s for a 1000 kg rocket, ~20 m/s for a 20 000 kg rocket.
-        // Terminal vel: v_t = sqrt(2*m*g / (rho0 * Cd * 10))
-        // → Cd = 2*m*g / (rho0 * v_t^2 * 10)
+        // Dynamic Cd targeting a mass-dependent terminal velocity on Earth.
+        // On Mars the thinner air naturally produces a higher terminal velocity.
         const v_t = 3 + Math.min(1, Math.max(0, (mass - 1000) / 19000)) * 17;
         cd = (2 * mass * 9.81) / (EARTH.rho0 * v_t * v_t * 10);
       } else {
@@ -1150,8 +1259,8 @@ function physicsStep(dt) {
   sim.gforce  = ngAcc / 9.81;
 
   // Integrate
-  const ax = geX + gmX + ftX + fdX;
-  const ay = geY + gmY + ftY + fdY;
+  const ax = geX + gmX + gmarX + ftX + fdX;
+  const ay = geY + gmY + gmarY + ftY + fdY;
   sim.vx += ax * dt;
   sim.vy += ay * dt;
   sim.px += sim.vx * dt;
@@ -1234,13 +1343,35 @@ function physicsStep(dt) {
       }
     }
   }
+
+  // --- Mars surface ---
+  const marp2  = marsPos();
+  const dMarx  = sim.px - marp2.x, dMary = sim.py - marp2.y;
+  const distMar = Math.sqrt(dMarx * dMarx + dMary * dMary);
+  const marNX  = dMarx / distMar, marNY = dMary / distMar;
+  const vRadMars = sim.vx * marNX + sim.vy * marNY;
+
+  if (distMar <= MARS.radius + 3) {
+    if (vRadMars < 0) {
+      const pushScale = (MARS.radius + 2) / Math.max(distMar, 1);
+      sim.px = marp2.x + dMarx * pushScale;
+      sim.py = marp2.y + dMary * pushScale;
+      const impactSpeed = -vRadMars;
+      sim.vx -= vRadMars * marNX;
+      sim.vy -= vRadMars * marNY;
+      if (!sim.landed && !sim.crashed) {
+        handleImpact(impactSpeed, 'mars');
+      }
+      return;
+    }
+    // Moving away from Mars surface — let it go
+  }
 }
 
 // ---- Handle impact on any body ----
 function handleImpact(impactSpeed, body) {
   const dmg = calcDamage(impactSpeed);
   sim.integrity = Math.max(0, 100 - dmg);
-  const hasCapsule = sim.stages.some(stg => stg.some(p => p.type === 'capsule'));
 
   if (body === 'moon') {
     if (sim.integrity === 0) {
@@ -1255,6 +1386,23 @@ function handleImpact(impactSpeed, body) {
     } else {
       sim.landed = true;
       endFlight('CRASH MOON LANDING', `🔶 Barely made it — ${impactSpeed.toFixed(0)} m/s`);
+    }
+    return;
+  }
+
+  if (body === 'mars') {
+    if (sim.integrity === 0) {
+      sim.crashed = true;
+      endFlight('DESTROYED', `💥 Mars impact at ${impactSpeed.toFixed(0)} m/s`);
+    } else if (sim.integrity >= 85) {
+      sim.landed = true;
+      endFlight('MARS LANDING! 🔴', `Historic Martian touchdown — ${impactSpeed.toFixed(0)} m/s`);
+    } else if (sim.integrity >= 50) {
+      sim.landed = true;
+      endFlight('HARD MARS LANDING', `⚠ Rough Martian touchdown — ${impactSpeed.toFixed(0)} m/s`);
+    } else {
+      sim.landed = true;
+      endFlight('CRASH MARS LANDING', `🔶 Barely survived — ${impactSpeed.toFixed(0)} m/s`);
     }
     return;
   }
@@ -1355,12 +1503,30 @@ function gameLoop(now) {
   animFrame = requestAnimationFrame(gameLoop);
 }
 
+function hasCapsule() {
+  if (!sim) return false;
+  for (let si = sim.stageIdx; si < sim.stages.length; si++) {
+    if (sim.stages[si].some(p => p.type === 'capsule')) return true;
+  }
+  return false;
+}
+
 function handleInput(dt) {
   if (!sim) return;
-  const ROT  = 1.1;
-  const THR  = 0.9;
-  if (keys['KeyA'] || keys['ArrowLeft'])  sim.angVel += ROT * dt;
-  if (keys['KeyD'] || keys['ArrowRight']) sim.angVel -= ROT * dt;
+  const ROT = 1.1, THR = 0.9;
+  const anyControl = keys['KeyA'] || keys['ArrowLeft'] || keys['KeyD'] || keys['ArrowRight'] ||
+                     keys['KeyW'] || keys['ArrowUp']   || keys['KeyS'] || keys['ArrowDown'];
+  if (!hasCapsule()) {
+    if (anyControl && !sim._warnedNoCapsule) {
+      sim._warnedNoCapsule = true;
+      showStatus('⚠ NO CAPSULE — NO CONTROL', 2000);
+    }
+    return;
+  }
+  // A / Left  → tilt nose LEFT  (decrease angle → thrust left)
+  if (keys['KeyA'] || keys['ArrowLeft'])  sim.angVel -= ROT * dt;
+  // D / Right → tilt nose RIGHT (increase angle → thrust right)
+  if (keys['KeyD'] || keys['ArrowRight']) sim.angVel += ROT * dt;
   if (keys['KeyW'] || keys['ArrowUp'])    sim.throttle = Math.min(1, sim.throttle + THR * dt);
   if (keys['KeyS'] || keys['ArrowDown'])  sim.throttle = Math.max(0, sim.throttle - THR * dt);
 }
@@ -1393,10 +1559,11 @@ function toggleMap() {
   document.getElementById('mapInfo').style.display   = mapMode ? 'block' : 'none';
   document.getElementById('orbitInfo').style.display = mapMode ? 'flex'  : 'none';
   if (mapMode) {
-    preMMapScale = cam.targetScale;           // save flight zoom
-    cam.targetScale = 1 / (EARTH.radius * 3.8);
+    preMMapScale = cam.targetScale;
+    const bodyR = sim ? getSOI().radius : EARTH.radius;
+    cam.targetScale = 1 / (bodyR * 3.8);
   } else if (preMMapScale !== null) {
-    cam.targetScale = preMMapScale;           // restore flight zoom
+    cam.targetScale = preMMapScale;
     preMMapScale = null;
   }
 }
@@ -1420,8 +1587,10 @@ function renderFlight() {
     cam.x += (sim.px - cam.x) * 0.09;
     cam.y += (sim.py - cam.y) * 0.09;
   } else {
-    cam.x += (0 - cam.x) * 0.05;
-    cam.y += (0 - cam.y) * 0.05;
+    // In map mode, centre on the current SOI body so orbit is visible
+    const soiCam = getSOI();
+    cam.x += (soiCam.bx - cam.x) * 0.05;
+    cam.y += (soiCam.by - cam.y) * 0.05;
   }
   // Log-space interpolation: each frame the current scale moves 12% of the way
   // toward the target in log-space, giving the same *feel* at any zoom level.
@@ -1443,14 +1612,30 @@ function renderFlight() {
   drawStars();
 
   if (mapMode) {
+    // Moon orbit ring
     gCtx.beginPath(); gCtx.arc(0, 0, MOON.orbitR, 0, TAU);
     gCtx.strokeStyle = 'rgba(255,255,255,0.03)';
     gCtx.lineWidth   = 1 / cam.scale;
     gCtx.stroke();
+
+    // SOI circles
+    const lw = Math.max(2e5, 1 / cam.scale);
+    gCtx.lineWidth = lw;
+    gCtx.beginPath(); gCtx.arc(0, 0, EARTH.soi, 0, TAU);
+    gCtx.strokeStyle = 'rgba(80,180,255,0.12)'; gCtx.stroke();
+
+    const mp3 = moonPos();
+    gCtx.beginPath(); gCtx.arc(mp3.x, mp3.y, MOON.soi, 0, TAU);
+    gCtx.strokeStyle = 'rgba(200,200,150,0.14)'; gCtx.stroke();
+
+    const marp3 = marsPos();
+    gCtx.beginPath(); gCtx.arc(marp3.x, marp3.y, MARS.soi, 0, TAU);
+    gCtx.strokeStyle = 'rgba(220,110,50,0.18)'; gCtx.stroke();
   }
 
   drawEarth();
   drawMoon();
+  drawMars();
 
   if (sim.traj.length > 1) {
     gCtx.beginPath();
@@ -1613,6 +1798,81 @@ function drawMoon() {
   }
 }
 
+function drawMars() {
+  const mp = marsPos();
+  const R  = MARS.radius;
+
+  gCtx.save();
+  gCtx.translate(mp.x, mp.y);
+
+  // ---- Thin atmosphere glow ----
+  const atR = R + MARS.atmosphereH;
+  const ag = gCtx.createRadialGradient(0, 0, R * 0.96, 0, 0, atR);
+  ag.addColorStop(0,   'rgba(210,130,60,0.12)');
+  ag.addColorStop(0.5, 'rgba(190,100,40,0.05)');
+  ag.addColorStop(1,   'rgba(170,80,20,0)');
+  gCtx.beginPath(); gCtx.arc(0, 0, atR, 0, TAU);
+  gCtx.fillStyle = ag; gCtx.fill();
+
+  // ---- Mars body gradient ----
+  const mg = gCtx.createRadialGradient(-R*0.25, R*0.25, 0, 0, 0, R);
+  mg.addColorStop(0,   '#c1522a');
+  mg.addColorStop(0.55,'#a83c1a');
+  mg.addColorStop(1,   '#6e2408');
+
+  // ---- Draw using terrain outline ----
+  gCtx.beginPath();
+  for (let i = 0; i <= MARS_TERRAIN_PTS; i++) {
+    const idx   = i % MARS_TERRAIN_PTS;
+    const angle = (idx / MARS_TERRAIN_PTS) * TAU;
+    const r     = R * (1 + MARS_TERRAIN[idx]);
+    const tx    = Math.cos(angle) * r;
+    const ty    = Math.sin(angle) * r;
+    if (i === 0) gCtx.moveTo(tx, ty);
+    else         gCtx.lineTo(tx, ty);
+  }
+  gCtx.closePath();
+  gCtx.fillStyle = mg; gCtx.fill();
+
+  // ---- Rocky surface edge ----
+  gCtx.strokeStyle = 'rgba(60,20,5,0.5)';
+  gCtx.lineWidth   = R * 0.004;
+  gCtx.stroke();
+
+  gCtx.save();
+  gCtx.beginPath(); gCtx.arc(0, 0, R, 0, TAU); gCtx.clip();
+
+  // ---- Surface features — dust storms, canyons, lava plains ----
+  gCtx.fillStyle = 'rgba(90,25,5,0.18)';
+  [[-0.10, 0.10, 0.38, 0.18, 0.3],[0.30,-0.30, 0.22, 0.12,-0.2],
+   [-0.50,-0.20, 0.18, 0.10, 0.5],[0.55, 0.40, 0.20, 0.10,-0.3]].forEach(([fx,fy,rw,rh,rot]) => {
+    gCtx.beginPath(); gCtx.ellipse(fx*R, fy*R, rw*R, rh*R, rot, 0, TAU); gCtx.fill();
+  });
+
+  // Olympus Mons approximation — bright volcanic dome
+  gCtx.fillStyle = 'rgba(200,120,60,0.25)';
+  gCtx.beginPath(); gCtx.arc(-0.35*R, 0.45*R, 0.12*R, 0, TAU); gCtx.fill();
+
+  // Polar ice cap (north)
+  gCtx.fillStyle = 'rgba(220,210,200,0.55)';
+  gCtx.beginPath(); gCtx.ellipse(0, R*0.94, R*0.12, R*0.05, 0, 0, TAU); gCtx.fill();
+  // Polar ice cap (south)
+  gCtx.beginPath(); gCtx.ellipse(0, -R*0.93, R*0.09, R*0.04, 0, 0, TAU); gCtx.fill();
+
+  gCtx.restore(); // clip
+  gCtx.restore(); // translate
+
+  // ---- Map label ----
+  if (mapMode) {
+    const sx = (mp.x - cam.x)*cam.scale + gameCanvas.width/2;
+    const sy = -(mp.y - cam.y)*cam.scale + gameCanvas.height/2;
+    gCtx.save(); gCtx.setTransform(1,0,0,1,0,0);
+    gCtx.fillStyle='rgba(220,140,80,0.75)'; gCtx.font='11px Courier New'; gCtx.textAlign='center';
+    gCtx.fillText('Mars', sx, sy - R*cam.scale - 7);
+    gCtx.restore();
+  }
+}
+
 function drawRocket() {
   if (!sim) return;
 
@@ -1625,7 +1885,9 @@ function drawRocket() {
   gCtx.save();
   gCtx.translate(sim.px, sim.py);
 
-  const canvasRot = -(radialAng - sim.angle) - Math.PI / 2;
+  // canvasRot: (radialAng - sim.angle) + π/2 correctly aligns the nose with the
+  // thrust vector in the Y-flipped world-space canvas context.
+  const canvasRot = (radialAng - sim.angle) + Math.PI / 2;
   gCtx.rotate(canvasRot);
 
   // Collect parts first so totalH is known before computing pxSc
@@ -1761,13 +2023,15 @@ function lerpColor(hex1, hex2, t) {
 
 function drawOrbitPrediction() {
   if (!sim) return;
+  const soi = getSOI();
   let ppx = sim.px, ppy = sim.py, pvx = sim.vx, pvy = sim.vy;
   const pts = [];
   for (let i = 0; i < 420; i++) {
-    const rr = Math.sqrt(ppx*ppx + ppy*ppy);
-    if (rr < EARTH.radius) break;
-    const ax = -EARTH.gm * ppx / (rr*rr*rr);
-    const ay = -EARTH.gm * ppy / (rr*rr*rr);
+    const dx = ppx - soi.bx, dy = ppy - soi.by;
+    const rr = Math.sqrt(dx*dx + dy*dy);
+    if (rr < soi.radius) break;
+    const ax = -soi.gm * dx / (rr*rr*rr);
+    const ay = -soi.gm * dy / (rr*rr*rr);
     pvx += ax * 30; pvy += ay * 30;
     ppx += pvx * 30; ppy += pvy * 30;
     pts.push({ x:ppx, y:ppy });
@@ -1784,19 +2048,20 @@ function drawOrbitPrediction() {
 
   let maxR = 0, minR = Infinity, apPt = null, pePt = null;
   for (const pt of pts) {
-    const r = Math.sqrt(pt.x*pt.x + pt.y*pt.y);
+    const dx = pt.x - soi.bx, dy = pt.y - soi.by;
+    const r = Math.sqrt(dx*dx + dy*dy);
     if (r > maxR) { maxR = r; apPt = pt; }
     if (r < minR) { minR = r; pePt = pt; }
   }
   if (apPt) {
-    gCtx.beginPath(); gCtx.arc(apPt.x,apPt.y,4/cam.scale,0,TAU);
+    gCtx.beginPath(); gCtx.arc(apPt.x, apPt.y, 4/cam.scale, 0, TAU);
     gCtx.fillStyle='#3dd68c'; gCtx.fill();
-    document.getElementById('o-ap').textContent = fmtAlt(maxR - EARTH.radius);
+    document.getElementById('o-ap').textContent = fmtAlt(maxR - soi.radius);
   }
   if (pePt) {
-    gCtx.beginPath(); gCtx.arc(pePt.x,pePt.y,4/cam.scale,0,TAU);
+    gCtx.beginPath(); gCtx.arc(pePt.x, pePt.y, 4/cam.scale, 0, TAU);
     gCtx.fillStyle='#d64040'; gCtx.fill();
-    document.getElementById('o-pe').textContent = fmtAlt(minR - EARTH.radius);
+    document.getElementById('o-pe').textContent = fmtAlt(minR - soi.radius);
   }
 }
 
@@ -1806,36 +2071,33 @@ function drawOrbitPrediction() {
 function updateHUD() {
   if (!sim) return;
 
-  const rE  = Math.sqrt(sim.px*sim.px + sim.py*sim.py);
-  const alt = rE - EARTH.radius;
-  const spd = Math.sqrt(sim.vx*sim.vx + sim.vy*sim.vy);
-  const rx = sim.px/rE, ry = sim.py/rE;
-  const vspd   = sim.vx*rx + sim.vy*ry;
-  const hspd   = Math.sqrt(Math.max(0, spd*spd - vspd*vspd));
-  const fuelPct= currentFuelPct();
+  const soi  = getSOI();
+  const rx   = sim.px - soi.bx, ry = sim.py - soi.by;
+  const r    = Math.sqrt(rx*rx + ry*ry);
+  const alt  = r - soi.radius;
 
-  const mp2    = moonPos();
-  const nearM  = Math.sqrt((sim.px-mp2.x)**2+(sim.py-mp2.y)**2) < MOON.radius * 4;
+  // Relative velocity (rocket velocity minus body velocity for proper orbital speed)
+  const rvx  = sim.vx - soi.bvx, rvy = sim.vy - soi.bvy;
+  const rSpd = Math.sqrt(rvx*rvx + rvy*rvy);
+  const radX = rx / r, radY = ry / r;
+  const vspd = rvx*radX + rvy*radY;
+  const hspd = Math.sqrt(Math.max(0, rSpd*rSpd - vspd*vspd));
+
+  const BODY_LABEL = { earth:'🌍 Earth', moon:'🌕 Moon', mars:'🔴 Mars' };
 
   document.getElementById('t-alt').textContent  = fmtAlt(alt);
-  document.getElementById('t-spd').textContent  = fmtSpd(spd);
+  document.getElementById('t-spd').textContent  = fmtSpd(rSpd);
   document.getElementById('t-vs').textContent   = (vspd >= 0 ? '+' : '') + fmtSpd(vspd);
   document.getElementById('t-hs').textContent   = fmtSpd(hspd);
-  document.getElementById('t-fuel').textContent = fuelPct.toFixed(1) + '%';
+  document.getElementById('t-fuel').textContent = currentFuelPct().toFixed(1) + '%';
   document.getElementById('t-stg').textContent  = (sim.stageIdx+1) + ' / ' + sim.stages.length;
   document.getElementById('t-gf').textContent   = sim.gforce.toFixed(2) + ' g';
-  document.getElementById('t-body').textContent = nearM ? '🌕 Moon' : '🌍 Earth';
+  document.getElementById('t-body').textContent = BODY_LABEL[soi.body] || soi.body;
 
-  // ---- Delta-v remaining (Tsiolkovsky rocket equation, stage-by-stage) ----
   document.getElementById('t-dv').textContent = fmtSpd(computeDeltaV());
 
-  // ---- Circular orbit speed at current altitude (vis-viva: v = √(GM/r)) ----
-  const vcBody  = nearM ? MOON.gm : EARTH.gm;
-  const vcR     = nearM
-    ? Math.sqrt((sim.px - moonPos().x)**2 + (sim.py - moonPos().y)**2)
-    : rE;
-  const vc      = Math.sqrt(vcBody / vcR);
-  document.getElementById('t-vc').textContent = fmtSpd(vc);
+  // Circular orbit speed: v_c = √(GM/r)
+  document.getElementById('t-vc').textContent = fmtSpd(Math.sqrt(soi.gm / r));
 
   document.getElementById('thrFill').style.height = (sim.throttle*100) + '%';
   document.getElementById('thrVal').textContent   = Math.round(sim.throttle*100) + '%';
@@ -1876,22 +2138,28 @@ function computeDeltaV() {
 
 function computeEcc() {
   if (!sim) return 0;
-  const r  = Math.sqrt(sim.px*sim.px + sim.py*sim.py);
-  const v2 = sim.vx*sim.vx + sim.vy*sim.vy;
-  const eps= v2/2 - EARTH.gm/r;
-  if (eps >= 0) return 1 + eps / (EARTH.gm/r);
-  const a  = -EARTH.gm / (2*eps);
-  const h  = sim.px*sim.vy - sim.py*sim.vx;
-  return Math.sqrt(Math.max(0, 1 - h*h/(EARTH.gm*a)));
+  const soi = getSOI();
+  const rx  = sim.px - soi.bx, ry = sim.py - soi.by;
+  const rvx = sim.vx - soi.bvx, rvy = sim.vy - soi.bvy;
+  const r   = Math.sqrt(rx*rx + ry*ry);
+  const v2  = rvx*rvx + rvy*rvy;
+  const eps = v2/2 - soi.gm/r;
+  if (eps >= 0) return 1 + eps * r / soi.gm;
+  const a   = -soi.gm / (2*eps);
+  const h   = rx*rvy - ry*rvx;
+  return Math.sqrt(Math.max(0, 1 - h*h / (soi.gm * a)));
 }
 function computePeriod() {
   if (!sim) return 0;
-  const r  = Math.sqrt(sim.px*sim.px + sim.py*sim.py);
-  const v2 = sim.vx*sim.vx + sim.vy*sim.vy;
-  const eps= v2/2 - EARTH.gm/r;
+  const soi = getSOI();
+  const rx  = sim.px - soi.bx, ry = sim.py - soi.by;
+  const rvx = sim.vx - soi.bvx, rvy = sim.vy - soi.bvy;
+  const r   = Math.sqrt(rx*rx + ry*ry);
+  const v2  = rvx*rvx + rvy*rvy;
+  const eps = v2/2 - soi.gm/r;
   if (eps >= 0) return 0;
-  const a  = -EARTH.gm / (2*eps);
-  return TAU * Math.sqrt(a*a*a / EARTH.gm);
+  const a   = -soi.gm / (2*eps);
+  return TAU * Math.sqrt(a*a*a / soi.gm);
 }
 
 // ============================================================
