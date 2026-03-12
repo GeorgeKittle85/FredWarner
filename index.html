@@ -624,6 +624,10 @@ function addPart(key) {
     showBuildMsg('Max ' + MAX_PARTS + ' parts reached');
     return;
   }
+  if (key === 'parachute' && blueprint.includes('parachute')) {
+    showBuildMsg('Only one parachute allowed');
+    return;
+  }
   blueprint.push(key);
   renderBuilder();
 }
@@ -942,6 +946,7 @@ function buildSimAndFly() {
     angVel: 0,
     throttle: 0,
     parachute: false,
+    chuteDestroyed: false,    // true once chute is burned off by throttle
     time: 0,
     moonAngle0: MOON.startAngle,
     crashed: false,
@@ -1109,6 +1114,14 @@ function physicsStep(dt) {
     stg._fuel = Math.max(0, stg._fuel - stg._fuelRate * sim.throttle * dt);
   }
 
+  // ---- Parachute throttle-destruction check ----
+  // If player fires engines above 10% throttle while chute is deployed, it burns off.
+  if (sim.parachute && sim.throttle > 0.10) {
+    sim.parachute      = false;
+    sim.chuteDestroyed = true;
+    showStatus('⚠ PARACHUTE BURNED OFF!', 2000);
+  }
+
   // Drag
   const alt = rE - EARTH.radius;
   const rho = atmDensity(alt);
@@ -1116,7 +1129,17 @@ function physicsStep(dt) {
   if (rho > 0) {
     const spd = Math.sqrt(vx * vx + vy * vy);
     if (spd > 0.01) {
-      const cd   = sim.parachute ? 3.0 : 0.28;
+      let cd;
+      if (sim.parachute) {
+        // Compute a Cd that gives the desired mass-dependent terminal velocity.
+        // Target: ~3 m/s for a 1000 kg rocket, ~20 m/s for a 20 000 kg rocket.
+        // Terminal vel: v_t = sqrt(2*m*g / (rho0 * Cd * 10))
+        // → Cd = 2*m*g / (rho0 * v_t^2 * 10)
+        const v_t = 3 + Math.min(1, Math.max(0, (mass - 1000) / 19000)) * 17;
+        cd = (2 * mass * 9.81) / (EARTH.rho0 * v_t * v_t * 10);
+      } else {
+        cd = 0.28;
+      }
       const drag = 0.5 * rho * spd * spd * cd * 10;
       fdX = -drag * vx / spd / mass;
       fdY = -drag * vy / spd / mass;
@@ -1262,19 +1285,51 @@ function activateStage() {
     setTimeout(() => btn.classList.remove('lit'), 500);
     checkDeployChute();
   } else {
+    // Try to deploy chute on last stage
     if (!sim.parachute && sim.stages[sim.stageIdx].some(p => p.type === 'parachute')) {
-      sim.parachute = true;
-      showStatus('PARACHUTE DEPLOYED', 1400);
+      tryDeployChute();
     } else {
       showStatus('NO MORE STAGES', 800);
     }
   }
 }
 
+// Returns altitude above Earth surface (metres)
+function currentAlt() {
+  if (!sim) return 0;
+  return Math.sqrt(sim.px * sim.px + sim.py * sim.py) - EARTH.radius;
+}
+
+function tryDeployChute() {
+  if (sim.chuteDestroyed) {
+    showStatus('⚠ PARACHUTE DESTROYED', 1600);
+    return;
+  }
+  if (sim.parachute) return; // already deployed
+  if (!sim.stages[sim.stageIdx].some(p => p.type === 'parachute')) {
+    showStatus('NO PARACHUTE IN THIS STAGE', 1200);
+    return;
+  }
+  const alt = currentAlt();
+  const spd = Math.sqrt(sim.vx * sim.vx + sim.vy * sim.vy);
+  if (alt > 500) {
+    showStatus('TOO HIGH — DEPLOY BELOW 500 m', 1600);
+    return;
+  }
+  if (spd < 1) {
+    showStatus('NOT MOVING FAST ENOUGH', 1200);
+    return;
+  }
+  sim.parachute = true;
+  showStatus('PARACHUTE DEPLOYED', 1400);
+}
+
 function checkDeployChute() {
-  if (!sim.parachute && sim.stages[sim.stageIdx] && sim.stages[sim.stageIdx].some(p => p.type === 'parachute')) {
-    sim.parachute = true;
-    showStatus('PARACHUTE DEPLOYED', 1400);
+  // Only auto-deploy on staging if alt and speed conditions are met
+  if (!sim.parachute && !sim.chuteDestroyed &&
+      sim.stages[sim.stageIdx] &&
+      sim.stages[sim.stageIdx].some(p => p.type === 'parachute')) {
+    tryDeployChute();
   }
 }
 
@@ -1318,6 +1373,11 @@ function onKeyDown(e) {
   if (e.code === 'Period') changeWarp(1);
   if (e.code === 'Equal' || e.code === 'NumpadAdd')    zoomIn();
   if (e.code === 'Minus'  || e.code === 'NumpadSubtract') zoomOut();
+  if (e.code === 'KeyF' && sim && !sim.crashed && !sim.landed) {
+    // Secret refuel — top up every stage's tanks to full
+    for (const stg of sim.stages) stg._fuel = stg._totalFuel;
+    showStatus('⛽ REFUELLED', 1200);
+  }
 }
 
 function onWheel(e) {
