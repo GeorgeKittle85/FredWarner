@@ -516,6 +516,31 @@ const MARS_TERRAIN = (() => {
   return t;
 })();
 
+// ---- Pre-built Path2D terrain outlines (built once, reused every frame) ----
+const MOON_TERRAIN_PATH = (() => {
+  const p = new Path2D();
+  for (let i = 0; i <= MOON_TERRAIN_PTS; i++) {
+    const idx = i % MOON_TERRAIN_PTS;
+    const ang = (idx / MOON_TERRAIN_PTS) * Math.PI * 2;
+    const r   = MOON.radius * (1 + MOON_TERRAIN[idx]);
+    i === 0 ? p.moveTo(Math.cos(ang)*r, Math.sin(ang)*r)
+            : p.lineTo(Math.cos(ang)*r, Math.sin(ang)*r);
+  }
+  p.closePath(); return p;
+})();
+
+const MARS_TERRAIN_PATH = (() => {
+  const p = new Path2D();
+  for (let i = 0; i <= MARS_TERRAIN_PTS; i++) {
+    const idx = i % MARS_TERRAIN_PTS;
+    const ang = (idx / MARS_TERRAIN_PTS) * Math.PI * 2;
+    const r   = MARS.radius * (1 + MARS_TERRAIN[idx]);
+    i === 0 ? p.moveTo(Math.cos(ang)*r, Math.sin(ang)*r)
+            : p.lineTo(Math.cos(ang)*r, Math.sin(ang)*r);
+  }
+  p.closePath(); return p;
+})();
+
 // Part definitions  — pixH/pixW are builder display pixels (before scaling)
 const PARTS = {
   noseCone:  { name:'Nose Cone',     icon:'▲',  mass:120,   pixH:40,  pixW:48, color:'#b0b8c0', type:'nose',      desc:'Aerodynamic nose' },
@@ -545,6 +570,10 @@ let lastTime        = null;
 let statusTimer     = null;
 let buildMsgTimer   = null;
 let preMMapScale    = null;   // saved zoom before entering map mode
+let _fpos           = {};     // per-frame position cache (moonPos, marsPos, soiData)
+let _orbitCache     = null;   // cached orbit prediction points
+let _orbitCacheAge  = 999;    // frames since last orbit recompute
+const ORBIT_TTL     = 12;     // recompute orbit prediction every N frames
 const keys          = {};
 const cam           = { x:0, y:0, scale:1/60, targetScale:1/60 };
 
@@ -1057,11 +1086,14 @@ function enterFlight() {
 
 function stopSim() {
   cancelAnimationFrame(animFrame);
-  animFrame = null;
-  sim       = null;
-  mapMode   = false;
-  warpIdx   = 0;
+  animFrame    = null;
+  sim          = null;
+  mapMode      = false;
+  warpIdx      = 0;
   preMMapScale = null;
+  _fpos        = {};
+  _orbitCache  = null;
+  _orbitCacheAge = 999;
   document.getElementById('flightHUD').style.display = 'none';
   document.getElementById('endScreen').style.display = 'none';
   document.getElementById('warpVal').textContent = '1×';
@@ -1112,8 +1144,9 @@ function zoomOut() {
 //  PHYSICS
 // ============================================================
 function moonPos() {
+  if (_fpos.moon) return _fpos.moon;
   const a = sim.moonAngle0 + (sim.time / MOON.period) * TAU;
-  return { x: Math.cos(a) * MOON.orbitR, y: Math.sin(a) * MOON.orbitR };
+  return (_fpos.moon = { x: Math.cos(a) * MOON.orbitR, y: Math.sin(a) * MOON.orbitR });
 }
 
 function atmDensity(alt) {
@@ -1140,27 +1173,29 @@ function currentFuelPct() {
 }
 
 function marsPos() {
+  if (_fpos.mars) return _fpos.mars;
   const a = (sim ? sim.marsAngle0 : MARS.startAngle) + ((sim ? sim.time : 0) / MARS.period) * TAU;
-  return {
+  return (_fpos.mars = {
     x: SUN_POS.x + Math.cos(a) * MARS.semiMajor,
     y: SUN_POS.y + Math.sin(a) * MARS.semiMajor,
-  };
+  });
 }
 
 // Returns the dominant gravitational body (SOI) for the rocket's current position.
 // Includes body position, GM, radius, and velocity for relative-frame calculations.
 function getSOI() {
-  if (!sim) return { body:'earth', gm:EARTH.gm, radius:EARTH.radius, bx:0, by:0, bvx:0, bvy:0 };
+  if (_fpos.soi) return _fpos.soi;
+  if (!sim) return (_fpos.soi = { body:'earth', gm:EARTH.gm, radius:EARTH.radius, bx:0, by:0, bvx:0, bvy:0 });
 
   const mp   = moonPos();
   const rMoon = Math.hypot(sim.px - mp.x, sim.py - mp.y);
   if (rMoon < MOON.soi) {
     const moonA = sim.moonAngle0 + (sim.time / MOON.period) * TAU;
     const mw    = TAU / MOON.period;
-    return { body:'moon', gm:MOON.gm, radius:MOON.radius,
+    return (_fpos.soi = { body:'moon', gm:MOON.gm, radius:MOON.radius,
              bx: mp.x, by: mp.y, dist: rMoon,
              bvx: -mw * MOON.orbitR * Math.sin(moonA),
-             bvy:  mw * MOON.orbitR * Math.cos(moonA) };
+             bvy:  mw * MOON.orbitR * Math.cos(moonA) });
   }
 
   const marp  = marsPos();
@@ -1168,14 +1203,14 @@ function getSOI() {
   if (rMars < MARS.soi) {
     const marsA = sim.marsAngle0 + (sim.time / MARS.period) * TAU;
     const marW  = TAU / MARS.period;
-    return { body:'mars', gm:MARS.gm, radius:MARS.radius,
+    return (_fpos.soi = { body:'mars', gm:MARS.gm, radius:MARS.radius,
              bx: marp.x, by: marp.y, dist: rMars,
              bvx: -marW * MARS.semiMajor * Math.sin(marsA),
-             bvy:  marW * MARS.semiMajor * Math.cos(marsA) };
+             bvy:  marW * MARS.semiMajor * Math.cos(marsA) });
   }
 
   const rE = Math.hypot(sim.px, sim.py);
-  return { body:'earth', gm:EARTH.gm, radius:EARTH.radius, bx:0, by:0, dist:rE, bvx:0, bvy:0 };
+  return (_fpos.soi = { body:'earth', gm:EARTH.gm, radius:EARTH.radius, bx:0, by:0, dist:rE, bvx:0, bvy:0 });
 }
 
 function physicsStep(dt) {
@@ -1489,6 +1524,9 @@ function gameLoop(now) {
   const rawDt = Math.min((now - lastTime) / 1000, 0.05);
   lastTime = now;
 
+  _fpos = {};          // clear per-frame position cache
+  _orbitCacheAge++;    // age the orbit prediction cache
+
   if (sim && !sim.crashed && !sim.landed) {
     handleInput(rawDt);
     const warp  = WARP_LVL[warpIdx];
@@ -1582,12 +1620,12 @@ function renderFlight() {
   gCtx.fillRect(0, 0, gameCanvas.width, gameCanvas.height);
   if (!sim) return;
 
-  // Smooth camera follow — no auto-scale, user controls zoom manually
+  // Camera: snap directly to rocket in flight so it never lags at any warp level.
+  // In map mode, lerp gently toward the SOI body centre so the orbit stays centred.
   if (!mapMode) {
-    cam.x += (sim.px - cam.x) * 0.09;
-    cam.y += (sim.py - cam.y) * 0.09;
+    cam.x = sim.px;
+    cam.y = sim.py;
   } else {
-    // In map mode, centre on the current SOI body so orbit is visible
     const soiCam = getSOI();
     cam.x += (soiCam.bx - cam.x) * 0.05;
     cam.y += (soiCam.by - cam.y) * 0.05;
@@ -1633,9 +1671,19 @@ function renderFlight() {
     gCtx.strokeStyle = 'rgba(220,110,50,0.18)'; gCtx.stroke();
   }
 
-  drawEarth();
-  drawMoon();
-  drawMars();
+  // Screen-space culling: skip drawing bodies whose bounding circle is entirely
+  // outside the viewport. Saves significant work when zoomed in close.
+  const hw = gameCanvas.width  / 2 / cam.scale;
+  const hh = gameCanvas.height / 2 / cam.scale;
+  function onScreen(bx, by, r) {
+    return Math.abs(bx - cam.x) < hw + r && Math.abs(by - cam.y) < hh + r;
+  }
+
+  if (onScreen(0, 0, EARTH.radius + EARTH.atmosphereH))  drawEarth();
+  const mp_ = moonPos();
+  if (onScreen(mp_.x, mp_.y, MOON.radius * 1.15))  drawMoon();
+  const marp_ = marsPos();
+  if (onScreen(marp_.x, marp_.y, MARS.radius + MARS.atmosphereH))  drawMars();
 
   if (sim.traj.length > 1) {
     gCtx.beginPath();
@@ -1655,14 +1703,24 @@ function renderFlight() {
 }
 
 function drawStars() {
-  // Star radius is kept constant in screen pixels by dividing by cam.scale.
-  // Clamp to avoid gigantic circles at extreme map-zoom levels.
+  // Stars are batched by brightness bucket: one beginPath+fill per bucket
+  // instead of 1000 individual draw calls. ~8 buckets → ~8 draw calls total.
   const maxStarR = EARTH.radius * 0.08;
+  const buckets  = {};
   for (const s of stars) {
-    const r = Math.min(s.sz / cam.scale, maxStarR);
+    const key = (Math.round(s.br * 5) / 5).toFixed(1);
+    if (!buckets[key]) buckets[key] = { br: +key, arcs: [] };
+    buckets[key].arcs.push(s);
+  }
+  for (const key in buckets) {
+    const { br, arcs } = buckets[key];
     gCtx.beginPath();
-    gCtx.arc(s.wx, s.wy, r, 0, TAU);
-    gCtx.fillStyle = `rgba(255,255,255,${s.br.toFixed(2)})`;
+    for (const s of arcs) {
+      const r = Math.min(s.sz / cam.scale, maxStarR);
+      gCtx.moveTo(s.wx + r, s.wy);
+      gCtx.arc(s.wx, s.wy, r, 0, TAU);
+    }
+    gCtx.fillStyle = `rgba(255,255,255,${br})`;
     gCtx.fill();
   }
 }
@@ -1753,24 +1811,14 @@ function drawMoon() {
   const mg = gCtx.createRadialGradient(-R*0.2,R*0.2,0, 0,0,R);
   mg.addColorStop(0,'#b9b8ae'); mg.addColorStop(0.6,'#969490'); mg.addColorStop(1,'#686660');
 
-  // Draw moon outline with hard terrain (jagged surface)
-  gCtx.beginPath();
-  for (let i = 0; i <= MOON_TERRAIN_PTS; i++) {
-    const idx   = i % MOON_TERRAIN_PTS;
-    const angle = (idx / MOON_TERRAIN_PTS) * TAU;
-    const r     = R * (1 + MOON_TERRAIN[idx]);
-    const tx    = Math.cos(angle) * r;
-    const ty    = Math.sin(angle) * r;
-    if (i === 0) gCtx.moveTo(tx, ty);
-    else         gCtx.lineTo(tx, ty);
-  }
-  gCtx.closePath();
-  gCtx.fillStyle = mg; gCtx.fill();
+  // ---- Moon body — use pre-built Path2D terrain outline ----
+  gCtx.fillStyle = mg;
+  gCtx.fill(MOON_TERRAIN_PATH);
 
-  // ---- Rocky surface edge (dark outline to emphasise jaggedness) ----
+  // ---- Rocky surface edge ----
   gCtx.strokeStyle = 'rgba(60,58,55,0.6)';
   gCtx.lineWidth   = R * 0.004;
-  gCtx.stroke();
+  gCtx.stroke(MOON_TERRAIN_PATH);
 
   // ---- Impact craters ----
   gCtx.fillStyle='rgba(0,0,0,0.13)';
@@ -1820,24 +1868,14 @@ function drawMars() {
   mg.addColorStop(0.55,'#a83c1a');
   mg.addColorStop(1,   '#6e2408');
 
-  // ---- Draw using terrain outline ----
-  gCtx.beginPath();
-  for (let i = 0; i <= MARS_TERRAIN_PTS; i++) {
-    const idx   = i % MARS_TERRAIN_PTS;
-    const angle = (idx / MARS_TERRAIN_PTS) * TAU;
-    const r     = R * (1 + MARS_TERRAIN[idx]);
-    const tx    = Math.cos(angle) * r;
-    const ty    = Math.sin(angle) * r;
-    if (i === 0) gCtx.moveTo(tx, ty);
-    else         gCtx.lineTo(tx, ty);
-  }
-  gCtx.closePath();
-  gCtx.fillStyle = mg; gCtx.fill();
+  // ---- Draw using pre-built Path2D terrain outline ----
+  gCtx.fillStyle = mg;
+  gCtx.fill(MARS_TERRAIN_PATH);
 
   // ---- Rocky surface edge ----
   gCtx.strokeStyle = 'rgba(60,20,5,0.5)';
   gCtx.lineWidth   = R * 0.004;
-  gCtx.stroke();
+  gCtx.stroke(MARS_TERRAIN_PATH);
 
   gCtx.save();
   gCtx.beginPath(); gCtx.arc(0, 0, R, 0, TAU); gCtx.clip();
@@ -2024,18 +2062,29 @@ function lerpColor(hex1, hex2, t) {
 function drawOrbitPrediction() {
   if (!sim) return;
   const soi = getSOI();
-  let ppx = sim.px, ppy = sim.py, pvx = sim.vx, pvy = sim.vy;
-  const pts = [];
-  for (let i = 0; i < 420; i++) {
-    const dx = ppx - soi.bx, dy = ppy - soi.by;
-    const rr = Math.sqrt(dx*dx + dy*dy);
-    if (rr < soi.radius) break;
-    const ax = -soi.gm * dx / (rr*rr*rr);
-    const ay = -soi.gm * dy / (rr*rr*rr);
-    pvx += ax * 30; pvy += ay * 30;
-    ppx += pvx * 30; ppy += pvy * 30;
-    pts.push({ x:ppx, y:ppy });
+
+  // Recompute orbit path every ORBIT_TTL frames or when SOI body changes
+  const soiChanged = _orbitCache && _orbitCache.body !== soi.body;
+  if (!_orbitCache || soiChanged || _orbitCacheAge >= ORBIT_TTL) {
+    _orbitCacheAge = 0;
+    const pts = [];
+    let ppx = sim.px, ppy = sim.py, pvx = sim.vx, pvy = sim.vy;
+    for (let i = 0; i < 420; i++) {
+      const dx = ppx - soi.bx, dy = ppy - soi.by;
+      const rr = Math.sqrt(dx*dx + dy*dy);
+      if (rr < soi.radius) break;
+      const inv = 1 / (rr*rr*rr);
+      pvx -= soi.gm * dx * inv * 30;
+      pvy -= soi.gm * dy * inv * 30;
+      ppx += pvx * 30;
+      ppy += pvy * 30;
+      pts.push({ x:ppx, y:ppy });
+    }
+    _orbitCache = { body: soi.body, bx: soi.bx, by: soi.by,
+                    radius: soi.radius, pts };
   }
+
+  const { pts, bx, by, radius } = _orbitCache;
   if (pts.length < 3) return;
 
   gCtx.beginPath();
@@ -2048,7 +2097,7 @@ function drawOrbitPrediction() {
 
   let maxR = 0, minR = Infinity, apPt = null, pePt = null;
   for (const pt of pts) {
-    const dx = pt.x - soi.bx, dy = pt.y - soi.by;
+    const dx = pt.x - bx, dy = pt.y - by;
     const r = Math.sqrt(dx*dx + dy*dy);
     if (r > maxR) { maxR = r; apPt = pt; }
     if (r < minR) { minR = r; pePt = pt; }
@@ -2056,12 +2105,12 @@ function drawOrbitPrediction() {
   if (apPt) {
     gCtx.beginPath(); gCtx.arc(apPt.x, apPt.y, 4/cam.scale, 0, TAU);
     gCtx.fillStyle='#3dd68c'; gCtx.fill();
-    document.getElementById('o-ap').textContent = fmtAlt(maxR - soi.radius);
+    document.getElementById('o-ap').textContent = fmtAlt(maxR - radius);
   }
   if (pePt) {
     gCtx.beginPath(); gCtx.arc(pePt.x, pePt.y, 4/cam.scale, 0, TAU);
     gCtx.fillStyle='#d64040'; gCtx.fill();
-    document.getElementById('o-pe').textContent = fmtAlt(minR - soi.radius);
+    document.getElementById('o-pe').textContent = fmtAlt(minR - radius);
   }
 }
 
